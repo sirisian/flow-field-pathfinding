@@ -955,12 +955,13 @@ var SimCore = (function () {
   // Work units: each pass is split into strips of 2 cell rows (8 tiles). A cell never straddles two strips, so any
   // thread can take any strip of a pass, in any order, and agents inside a cell still move in index order.
   const SHARED_KEYS = ['ax', 'ay', 'aG', 'aR', 'aC', 'aLv', 'aVX', 'aVY', 'aSide', 'aStuck', 'aSleep', 'aTry', 'aUid', 'aT0', 'aS', 'idOf', 'bvCell', 'bvLayer', 'ord', 'aB',
-    'wall', 'clear', 'F4', 'lastT', 'rho', 'jam', 'secActive', 'stamp', 'COS', 'SIN', 'passIdx', 'passStart', 'passItems', 'passItemStart'];
+    'wall', 'clear', 'F4', 'lastT', 'rho', 'jam', 'secActive', 'stamp', 'COS', 'SIN', 'passIdx', 'passStart', 'passItems', 'passItemStart',
+    'aIt', 'gorder', 'gHist', 'gItem', 'gBase'];
   const LV_KEYS = ['start', 'count', 'fill', 'agents', 'px', 'py', 'pr'];
   // Per-agent arrays the re-sort permutes (the same list, in the same order, as the one-thread re-sort).
   const PERM = ['ax', 'ay', 'aVX', 'aVY', 'aStuck', 'aT0', 'aR', 'aTry', 'idOf', 'bvCell', 'aG', 'aSide', 'aSleep', 'aS', 'aC', 'aLv', 'bvLayer', 'aUid'];
   // Phases of a threaded substep: every thread takes work items of the current phase until none are left.
-  const PH_MOVE = 1, PH_CONG = 2, PH_GCOUNT = 3, PH_GFILL = 4, PH_PERM = 5, PH_END = 9;
+  const PH_MOVE = 1, PH_CONG = 2, PH_GHASH = 3, PH_GSCATTER = 4, PH_PERM = 5, PH_GBUILD = 6, PH_END = 9;
   const BENCH_WARM = 24, BENCH_TICKS = 48; // per measured run: ticks after a switch that are not timed, then timed ticks
   // A work unit is up to 8 cells of one colour in one strip, so slower cores never hold a pass up for long.
   const STRIP_CELLS = 2, NSTRIP = Math.ceil(H / (COLOR_CELL * STRIP_CELLS)), NCG = Math.ceil(Math.ceil(W / COLOR_CELL / 3) / 8), NBUCKET = 9 * NSTRIP * NCG;
@@ -1329,37 +1330,41 @@ var SimCore = (function () {
       // Positions and radii are copied in bucket order so scans read memory sequentially.
       for (let a = 0; a < M; a++) { const l = lv[this.aLv[a]], j = l.fill[this.aB[a]]++; l.agents[j] = a; l.px[j] = this.ax[a]; l.py[j] = this.ay[a]; l.pr[j] = this.aR[a]; }
     }
-    // Threaded grid build. Item i < G0 is a range of level 0's buckets; the last two items are levels 1 and 2 whole.
-    // Each item handles only agents whose bucket is in its range, in index order, so every bucket lists its agents in
-    // index order exactly as rebuildGrid does.
-    gridItem(i) {
-      const G0 = this.gridG0;
-      if (i < G0) { const T = this.lv[0].T; return [0, Math.floor(T * i / G0), Math.floor(T * (i + 1) / G0)]; }
-      const k = i - G0 + 1; return [k, 0, this.lv[k].T];
+    // Threaded grid build, a parallel bucket sort. Each level's table is split into G bucket ranges ("items").
+    // GHASH: threads hash disjoint chunks of agents and count them per item. A short serial step turns the counts
+    // into offsets, item by item and chunk by chunk. GSCATTER: each chunk writes its agents into its items' lists,
+    // in index order. GBUILD: each item counts, prefixes and fills only its own buckets from its own list. Every
+    // bucket ends up listing its agents in index order, exactly as rebuildGrid does.
+    ensureGridScratch() {
+      const G = this.gridG, K = this.gridK, nG = 3 * G, M = this.M;
+      if (!this.aIt || this.aIt.length < M) { const z = Math.max(M, 1024, this.aIt ? this.aIt.length * 2 : 0); this.aIt = new Int32Array(z); this.gorder = new Int32Array(z); }
+      if (!this.gHist || this.gHist.length < K * nG) this.gHist = new Int32Array(64 * 96);
+      if (!this.gItem) { this.gItem = new Int32Array(97); this.gBase = new Int32Array(96); }
     }
-    gridCount(i) {
-      const [k, b0, b1] = this.gridItem(i), l = this.lv[k], M = this.M, ax = this.ax, ay = this.ay, aLv = this.aLv, aB = this.aB, cnt = l.count, inv = l.inv, mask = l.mask;
+    gridHash(c) {
+      const K = this.gridK, G = this.gridG, nG = 3 * G, M = this.M, a0 = Math.floor(M * c / K), a1 = Math.floor(M * (c + 1) / K);
+      const hist = this.gHist, row = c * nG, ax = this.ax, ay = this.ay, aLv = this.aLv, aB = this.aB, aIt = this.aIt, lv = this.lv;
+      hist.fill(0, row, row + nG);
+      for (let a = a0; a < a1; a++) {
+        const k = aLv[a], l = lv[k], b = hashBin(Math.floor(ax[a] * l.inv), Math.floor(ay[a] * l.inv), l.mask), it = k * G + ((b * G / l.T) | 0);
+        aB[a] = b; aIt[a] = it; hist[row + it]++;
+      }
+    }
+    gridScatter(c) {
+      const K = this.gridK, nG = 3 * this.gridG, M = this.M, a0 = Math.floor(M * c / K), a1 = Math.floor(M * (c + 1) / K);
+      const off = this.gHist, row = c * nG, aIt = this.aIt, go = this.gorder;
+      for (let a = a0; a < a1; a++) go[off[row + aIt[a]]++] = a;
+    }
+    gridBuild(it) {
+      const G = this.gridG, k = (it / G) | 0, r = it - k * G, l = this.lv[k], T = l.T, b0 = Math.ceil(r * T / G), b1 = Math.ceil((r + 1) * T / G);
+      const cnt = l.count, st = l.start, fill = l.fill, go = this.gorder, j0 = this.gItem[it], j1 = this.gItem[it + 1], aB = this.aB;
       cnt.fill(0, b0, b1);
-      let tot = 0;
-      for (let a = 0; a < M; a++) {
-        if (aLv[a] !== k) continue;
-        const b = hashBin(Math.floor(ax[a] * inv), Math.floor(ay[a] * inv), mask);
-        if (b < b0 || b >= b1) continue;
-        aB[a] = b; cnt[b]++; tot++;
-      }
-      Atomics.store(this.ctl, 20 + i, tot);
-    }
-    gridFill(i) {
-      const [k, b0, b1] = this.gridItem(i), l = this.lv[k], st = l.start, cnt = l.count, fill = l.fill;
-      let s = Atomics.load(this.ctl, 20 + i); // where this range starts in the level's agent list
+      for (let j = j0; j < j1; j++) cnt[aB[go[j]]]++;
+      let s = this.gBase[it];
       for (let b = b0; b < b1; b++) { st[b] = s; fill[b] = s; s += cnt[b]; }
-      if (b1 === l.T) st[l.T] = s;
-      const M = this.M, aLv = this.aLv, aB = this.aB, ag = l.agents, px = l.px, py = l.py, pr = l.pr, ax = this.ax, ay = this.ay, aR = this.aR;
-      for (let a = 0; a < M; a++) {
-        if (aLv[a] !== k) continue;
-        const b = aB[a]; if (b < b0 || b >= b1) continue;
-        const j = fill[b]++; ag[j] = a; px[j] = ax[a]; py[j] = ay[a]; pr[j] = aR[a];
-      }
+      if (r === G - 1) st[T] = s;
+      const ag = l.agents, px = l.px, py = l.py, pr = l.pr, ax = this.ax, ay = this.ay, aR = this.aR;
+      for (let j = j0; j < j1; j++) { const a = go[j], q = fill[aB[a]]++; ag[q] = a; px[q] = ax[a]; py[q] = ay[a]; pr[q] = aR[a]; }
     }
     // Everything a move of length L by agent a could touch, from every grid level, into rx/ry/rd/rc. The hash keeps the
     // 8 bins of a row inside an 8 x 8 block in consecutive buckets, so each block row is one contiguous range of agents:
@@ -1533,7 +1538,8 @@ var SimCore = (function () {
     congAgent(a, gdt) {
       const r0 = SIZES[0], x = this.ax[a], y = this.ay[a], r = this.aR[a], cx = x | 0, cy = y | 0, vx = this.aVX[a], vy = this.aVY[a];
       const w = gdt * (r / r0) * (r / r0); // a big agent counts as the small agents it displaces
-      this.secActive[(cy >> 5) * NSX + (cx >> 5)] = this.time;
+      const sec = this.secActive, tf = Math.fround(this.time), s0 = (cy >> 5) * NSX + (cx >> 5);
+      if (sec[s0] !== tf) sec[s0] = tf; // write only on change: every thread reads these few cache lines
       if (r <= 0.35) { this.addCong(cy * W + cx, w, vx, vy); return; }
       let k = 0; // spread over the tiles whose centres it covers
       const ty0 = Math.max(0, Math.floor(y - r)), ty1 = Math.min(H - 1, Math.floor(y + r)), tx0 = Math.max(0, Math.floor(x - r)), tx1 = Math.min(W - 1, Math.floor(x + r));
@@ -1541,7 +1547,7 @@ var SimCore = (function () {
       if (!k) { this.addCong(cy * W + cx, w, vx, vy); return; }
       for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
         const ex = tx + 0.5 - x, ey = ty + 0.5 - y;
-        if (ex * ex + ey * ey <= r * r) { this.addCong(ty * W + tx, w / k, vx, vy); this.secActive[(ty >> 5) * NSX + (tx >> 5)] = this.time; }
+        if (ex * ex + ey * ey <= r * r) { this.addCong(ty * W + tx, w / k, vx, vy); const s1 = (ty >> 5) * NSX + (tx >> 5); if (sec[s1] !== tf) sec[s1] = tf; }
       }
     }
     oncoming(c, dx, dy) {
@@ -1882,11 +1888,12 @@ var SimCore = (function () {
     // The whole substep on all threads, phase by phase; the same steps in the same order as substepSerial.
     // Returns false, with nothing done, if a helper never joins.
     substepThreaded(L, dts) {
-      const ctl = this.ctl, nh = this.threads - 1, doSort = this.tick % REORDER_EVERY === 0, G0 = Math.min(32, this.threads);
-      this.prepareGrid(); this.ensurePasses(); // allocations first: helpers get every array with this message
+      const ctl = this.ctl, nh = this.threads - 1, doSort = this.tick % REORDER_EVERY === 0;
+      this.gridG = Math.min(32, this.threads); this.gridK = Math.min(64, 2 * this.threads);
+      this.prepareGrid(); this.ensurePasses(); this.ensureGridScratch(); // allocations first: helpers get every array with this message
       const att = this.shareAll(), gen0 = Atomics.load(ctl, 0);
-      this.L = L; this.dts = dts; this.gdt = P.gain * dts; this.gridG0 = G0;
-      const sc = { tick: this.tick + 1, time: this.time, L, dts, wakeEvery: this.wakeEvery, wakeAll: this.wakeAll, lookBase: this.lookBase, seed: this.seed, M: this.M, gen0, G0,
+      this.L = L; this.dts = dts; this.gdt = P.gain * dts;
+      const sc = { tick: this.tick + 1, time: this.time, L, dts, wakeEvery: this.wakeEvery, wakeAll: this.wakeAll, lookBase: this.lookBase, seed: this.seed, M: this.M, gen0, gG: this.gridG, gK: this.gridK,
         lv: this.lv.map((l) => [l.mask, l.inv, l.maxR, l.T]) };
       for (let i = 4; i < 9; i++) Atomics.store(ctl, i, 0);
       const msg = { type: 'sub', att, log: this.hlog, sc };
@@ -1901,12 +1908,20 @@ var SimCore = (function () {
       let t0 = now();
       if (doSort) { this.computeOrder(); this.phase(PH_PERM, 0, 0, PERM.length); this.finishOrder(); this.cnt.other += now() - t0; }
       t0 = now();
-      const nG = G0 + 2;
-      this.phase(PH_GCOUNT, 0, 0, nG);
-      const base = [0, 0, 0];
-      for (let i = 0; i < nG; i++) { const k = i < G0 ? 0 : i - G0 + 1, t = ctl[20 + i]; ctl[20 + i] = base[k]; base[k] += t; }
-      for (let k = 0; k < 3; k++) { this.lv[k].n = base[k]; Atomics.store(ctl, 16 + k, base[k]); }
-      this.phase(PH_GFILL, 0, 0, nG);
+      const G = this.gridG, K = this.gridK, nG = 3 * G;
+      this.phase(PH_GHASH, 0, 0, K);
+      { // counts to offsets: item by item, chunk by chunk, so every item lists its agents in index order
+        const hist = this.gHist, gi = this.gItem, gb = this.gBase, lvn = [0, 0, 0]; let pos = 0;
+        for (let it = 0; it < nG; it++) {
+          const k = (it / G) | 0; gi[it] = pos; gb[it] = lvn[k];
+          for (let c = 0; c < K; c++) { const h = hist[c * nG + it]; hist[c * nG + it] = pos; pos += h; }
+          lvn[k] += pos - gi[it];
+        }
+        gi[nG] = pos;
+        for (let k = 0; k < 3; k++) { this.lv[k].n = lvn[k]; Atomics.store(ctl, 16 + k, lvn[k]); }
+      }
+      this.phase(PH_GSCATTER, 0, 0, K);
+      this.phase(PH_GBUILD, 0, 0, nG);
       this.cnt.upkeep += now() - t0;
       t0 = now(); this.buildPasses(); this.cnt.passes += now() - t0;
       const is = this.passItemStart;
@@ -1928,6 +1943,7 @@ var SimCore = (function () {
       this.runItems(code, param);
       Atomics.add(ctl, 3, 1);
       let v; const t1 = now();
+      for (let spin = 0; (v = Atomics.load(ctl, 3)) < nh + 1 && spin < 3000; spin++); // short phases end within microseconds
       while ((v = Atomics.load(ctl, 3)) < nh + 1) {
         if (Atomics.load(ctl, 12)) { this.dropThreads('A simulation helper failed mid-substep; back on one thread (checksums will show if the state was affected).'); return; }
         if (now() - t1 > 30000) { this.dropThreads('A simulation helper stopped mid-substep; back on one thread (checksums will show if the state was affected).'); return; }
@@ -1943,8 +1959,9 @@ var SimCore = (function () {
         const b = this.passItems[i], pi = this.passIdx, ps = this.passStart, e = ps[b + 1];
         if (code === PH_MOVE) { const L = this.L, dts = this.dts; for (let j = ps[b]; j < e; j++) this.moveAgent(pi[j], L, dts); }
         else { const gdt = this.gdt; for (let j = ps[b]; j < e; j++) this.congAgent(pi[j], gdt); }
-      } else if (code === PH_GCOUNT) this.gridCount(i);
-      else if (code === PH_GFILL) this.gridFill(i);
+      } else if (code === PH_GHASH) this.gridHash(i);
+      else if (code === PH_GSCATTER) this.gridScatter(i);
+      else if (code === PH_GBUILD) this.gridBuild(i);
       else if (code === PH_PERM) this.permuteOne(i);
     }
     dropThreads(text) {
@@ -2271,14 +2288,15 @@ var SimCore = (function () {
         else if (e[0] === 's') { const g = h.groups[e[1]]; if (g) g.slots[e[2]][e[3]] = e[4] >= 0 ? view(e[4]) : null; }
       }
       const sc = m.sc, ctl = h.ctl, ab = h.arrBuf;
-      h.tick = sc.tick; h.time = sc.time; h.L = sc.L; h.dts = sc.dts; h.gdt = P.gain * sc.dts; h.gridG0 = sc.G0;
+      h.tick = sc.tick; h.time = sc.time; h.L = sc.L; h.dts = sc.dts; h.gdt = P.gain * sc.dts; h.gridG = sc.gG; h.gridK = sc.gK;
       h.wakeEvery = sc.wakeEvery; h.wakeAll = sc.wakeAll; h.lookBase = sc.lookBase; h.seed = sc.seed; h.M = sc.M;
       for (let i = 0; i < 3; i++) { const l = h.lv[i], q = sc.lv[i]; l.mask = q[0]; l.inv = q[1]; l.maxR = q[2]; l.T = q[3]; }
       h.arrived = { push: (a) => { ab[Atomics.add(ctl, 4, 1)] = a; } };
       h.moved = 0; h.cnt.queries = 0; h.cnt.checks = 0;
       Atomics.add(ctl, 8, 1); Atomics.notify(ctl, 8);
       for (let gen = sc.gen0; ;) {
-        let v; while ((v = Atomics.load(ctl, 0)) <= gen) Atomics.wait(ctl, 0, v, 100);
+        let v; for (let spin = 0; (v = Atomics.load(ctl, 0)) <= gen && spin < 3000; spin++);
+        while ((v = Atomics.load(ctl, 0)) <= gen) Atomics.wait(ctl, 0, v, 100);
         gen = v;
         const code = Atomics.load(ctl, 1);
         if (code === PH_END) break;
@@ -2593,11 +2611,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
     const out = $('benchOut'); out.textContent = ''; $('benchBtn').disabled = false; $('thrA').disabled = false;
     if (m.error) { out.textContent = m.error; return; }
     const base = m.rows.find((r) => r.n === 1) || m.rows[0], t = document.createElement('table'), head = t.createTHead().insertRow();
-    for (const h of ['Threads', 'ms per 1/60 s', 'Speed-up', 'Moves', 'Congestion', 'Grid, sort, setup']) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = h; head.appendChild(th); }
+    for (const h of ['Threads', 'ms per 1/60 s', 'Speed-up', 'Moves', 'Congestion', 'Grid', 'Sort, setup']) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = h; head.appendChild(th); }
     const body = t.createTBody();
     for (const r of m.rows) {
-      const tr = body.insertRow(), rest = r.upkeep + r.passes + r.other;
-      for (const v of [String(r.n), r.step.toFixed(1), (base.step / r.step).toFixed(2) + '×', r.moves.toFixed(1), r.cong.toFixed(1), rest.toFixed(1)]) tr.insertCell().textContent = v;
+      const tr = body.insertRow();
+      for (const v of [String(r.n), r.step.toFixed(1), (base.step / r.step).toFixed(2) + '×', r.moves.toFixed(1), r.cong.toFixed(1), r.upkeep.toFixed(1), (r.passes + r.other).toFixed(1)]) tr.insertCell().textContent = v;
     }
     const best = m.rows.reduce((x, r) => (r.step < x.step ? r : x)), p = document.createElement('p');
     p.textContent = `Fastest: ${best.n} thread${best.n === 1 ? '' : 's'}, ${best.step.toFixed(1)} ms per 1/60 s, which is ${(16.67 / best.step).toFixed(2)}× real time. Moves, congestion, the grid rebuild and the re-sort run on all threads; pass setup and respawns still run on one. Peer B kept checking throughout.`;
