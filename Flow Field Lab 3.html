@@ -1,0 +1,3253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flow Field Lab 3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Newsreader:ital,opsz,wght@1,6..72,500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --page: #f2f6f7; --water: #e3eef3; --water-line: #c3d6e0; --sector: #8fb0c2; --land: #e2cd94; --land-edge: #a4874a;
+  --ink: #17324a; --ink-soft: #52697b; --rule: #cddbe2; --magenta: #a32277; --vec-h: #c0630e; --vec-v: #6f8899;
+  --outside: #d9e3e8; --sel: #17324a; --idle: #7d8f9b;
+  --ui: 'Atkinson Hyperlegible', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --chart-type: 'Newsreader', Georgia, 'Times New Roman', serif;
+  color-scheme: light; box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0b171f; --water: #10212b; --water-line: #233c4b; --sector: #3d6176; --land: #6d5b33; --land-edge: #9d834d;
+    --ink: #dbe7ed; --ink-soft: #93a9b6; --rule: #20384a; --magenta: #e068ba; --vec-h: #e5913f; --vec-v: #8aa3b3;
+    --outside: #081118; --sel: #ffffff; --idle: #8fa1ad; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0b171f; --water: #10212b; --water-line: #233c4b; --sector: #3d6176; --land: #6d5b33; --land-edge: #9d834d;
+  --ink: #dbe7ed; --ink-soft: #93a9b6; --rule: #20384a; --magenta: #e068ba; --vec-h: #e5913f; --vec-v: #8aa3b3;
+  --outside: #081118; --sel: #ffffff; --idle: #8fa1ad; color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html, body { height: 100%; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 var(--ui); display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+.bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 10px 16px 8px; border-bottom: 1px solid var(--rule); }
+h1 { font-family: var(--chart-type); font-style: italic; font-weight: 500; font-size: 26px; line-height: 1.1; margin: 0; letter-spacing: -0.01em; }
+.scenes { display: flex; flex-wrap: wrap; gap: 6px; }
+.lab2 { display: grid; grid-template-columns: minmax(0, 1fr) 290px; min-height: 0; }
+@media (max-width: 860px) { body { height: auto; } .lab2 { grid-template-columns: minmax(0, 1fr); } .viewport { height: 70vh; } }
+.viewport { position: relative; min-height: 320px; overflow: hidden; background: var(--outside); }
+#gpu { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+#selbox { position: absolute; border: 1px dashed var(--sel); background: color-mix(in srgb, var(--sel) 8%, transparent); pointer-events: none; display: none; }
+#toast { position: absolute; left: 12px; bottom: 12px; max-width: 70%; padding: 8px 12px; border-radius: 6px; background: var(--page); border: 1px solid var(--rule); font-size: 13px; display: none; }
+#nogpu { position: absolute; inset: 0; display: none; place-items: center; padding: 24px; text-align: center; }
+#nogpu div { max-width: 46ch; }
+.panel { border-left: 1px solid var(--rule); overflow-y: auto; padding: 12px 14px 20px; display: grid; gap: 14px; align-content: start; }
+@media (max-width: 860px) { .panel { border-left: 0; border-top: 1px solid var(--rule); } }
+.group h2 { font-family: var(--chart-type); font-style: italic; font-weight: 500; font-size: 18px; margin: 0 0 6px; }
+.group + .group { border-top: 1px solid var(--rule); padding-top: 12px; }
+button, select { font: inherit; font-size: 13.5px; color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 6px; min-height: 32px; padding: 4px 9px; cursor: pointer; }
+button:hover, select:hover { border-color: var(--ink-soft); }
+button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--page); }
+button:disabled { opacity: 0.5; cursor: default; }
+select { width: 100%; background: var(--page); }
+:focus-visible { outline: 2px solid var(--magenta); outline-offset: 2px; }
+.seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+.seg2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 8px; }
+.seg3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: 6px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.slider { display: grid; grid-template-columns: 1fr auto; align-items: baseline; margin: 6px 0; }
+.slider output { font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.slider input { grid-column: 1 / -1; width: 100%; margin: 4px 0 0; accent-color: var(--ink); }
+.toggle { display: flex; gap: 8px; align-items: center; margin: 4px 0; cursor: pointer; }
+.toggle input { accent-color: var(--ink); width: 15px; height: 15px; }
+.note { font-size: 12.5px; color: var(--ink-soft); margin: 4px 0 0; }
+.stats { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 0; font-size: 13px; }
+.stats dt { color: var(--ink-soft); } .stats dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.keys { margin: 0; padding-left: 16px; font-size: 12.5px; color: var(--ink-soft); }
+.keys li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>Flow Field Lab 3</h1>
+  <div class="scenes" role="group" aria-label="Scene">
+    <button type="button" data-scene="mixed" aria-pressed="true">Mixed crossing</button>
+    <button type="button" data-scene="uniform" aria-pressed="false">Uniform crossing</button>
+    <button type="button" data-scene="corridor" aria-pressed="false">Corridor</button>
+    <button type="button" data-scene="circle8" aria-pressed="false">Circle of 8</button>
+    <button type="button" data-scene="sandbox" aria-pressed="false">Sandbox</button>
+  </div>
+</header>
+<main class="lab2">
+  <div class="viewport" id="viewport">
+    <canvas id="gpu" aria-label="Map of 1024 by 1024 tiles with agents and flow arrows"></canvas>
+    <div id="selbox"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <div id="nogpu"><div><p><strong>This lab needs WebGPU.</strong></p><p id="nogpuText">Open it in a recent desktop version of Chrome or Edge.</p></div></div>
+  </div>
+  <aside class="panel" aria-label="Controls">
+    <section class="group">
+      <h2>Tools</h2>
+      <div class="seg" role="group" aria-label="Tool">
+        <button type="button" data-tool="select" aria-pressed="true">Select</button>
+        <button type="button" data-tool="wall" aria-pressed="false">Wall</button>
+        <button type="button" data-tool="erase" aria-pressed="false">Erase</button>
+        <button type="button" data-tool="spawn" aria-pressed="false">Spawn</button>
+      </div>
+      <div class="seg3" role="group" aria-label="Brush size">
+        <button type="button" data-brush="1" aria-pressed="false">1 tile</button>
+        <button type="button" data-brush="4" aria-pressed="true">4 tiles</button>
+        <button type="button" data-brush="16" aria-pressed="false">16 tiles</button>
+      </div>
+      <div class="seg3" role="group" aria-label="Spawn size">
+        <button type="button" data-size="-1" aria-pressed="true">Mixed</button>
+        <button type="button" data-size="0" aria-pressed="false">Small</button>
+        <button type="button" data-size="1" aria-pressed="false">Medium</button>
+        <button type="button" data-size="2" aria-pressed="false">Large</button>
+        <button type="button" data-size="3" aria-pressed="false">Huge</button>
+        <button type="button" data-size="4" aria-pressed="false">Giant</button>
+      </div>
+      <p class="note" id="hint"></p>
+      <p class="note">Radii 0.1, 0.25, 0.5, 1 and 2 tiles. Mixed crowds are 72% small, 15% medium, 8% large, 4% huge and 1% giant.</p>
+    </section>
+    <section class="group">
+      <h2>Simulation</h2>
+      <div class="slider"><label for="count">Agents</label><output id="countOut">10,000</output><input type="range" id="count" min="0" max="100000" step="1000" value="10000"></div>
+      <div class="slider"><label for="speed">Speed</label><output id="speedOut">2.5 tiles/s</output><input type="range" id="speed" min="0.5" max="10" step="0.5" value="2.5"></div>
+      <div class="row"><button type="button" id="pause">Pause</button><button type="button" id="reset">Reset scene</button></div>
+      <div class="seg2" role="group" aria-label="Simulation back end">
+        <button type="button" data-backend="cpu" aria-pressed="true">CPU worker</button>
+        <button type="button" data-backend="gpu" aria-pressed="false">GPU compute</button>
+      </div>
+      <p class="note" id="backendNote"></p>
+      <p class="note" style="margin-top:10px">Neighbour search</p>
+      <div class="seg2" role="group" aria-label="Neighbour search">
+        <button type="button" data-structure="grid" aria-pressed="true">Hashed grid</button>
+        <button type="button" data-structure="bvh" aria-pressed="false">Layered BVH</button>
+      </div>
+      <p class="note">Hashed grid: one grid level per size tier. Layered BVH: per-layer cell grids of dynamic trees with fat look-ahead boxes, adapted from your DBVH. Both feed the same movement rules.</p>
+    </section>
+    <section class="group">
+      <h2>View</h2>
+      <label class="toggle"><input type="checkbox" id="arrows" checked> Flow arrows</label>
+      <label class="toggle"><input type="checkbox" id="heat"> Congestion heat</label>
+      <label class="toggle"><input type="checkbox" id="grid" checked> Tile grid</label>
+      <label for="focus" class="note">Arrows show the field of</label>
+      <select id="focus"></select>
+      <div class="seg3" role="group" aria-label="Field for agent size">
+        <button type="button" data-fclass="0" aria-pressed="true">Small, medium</button>
+        <button type="button" data-fclass="1" aria-pressed="false">Large, huge</button>
+        <button type="button" data-fclass="2" aria-pressed="false">Giant</button>
+      </div>
+      <p class="note">Big agents follow fields built on walls thickened to their size, so they avoid gaps they cannot fit.</p>
+    </section>
+    <section class="group">
+      <h2>Live</h2>
+      <dl class="stats">
+        <dt>Frame rate</dt><dd id="sFps">–</dd>
+        <dt>Simulation per frame</dt><dd id="sSim">–</dd>
+        <dt>Neighbour search</dt><dd id="sStruct">–</dd>
+        <dt>Structure upkeep</dt><dd id="sUpkeep">–</dd>
+        <dt>Moves incl. queries</dt><dd id="sMoves">–</dd>
+        <dt>Checks per query</dt><dd id="sChecks">–</dd>
+        <dt>Field builds</dt><dd id="sField">–</dd>
+        <dt>Agents</dt><dd id="sAgents">–</dd>
+        <dt>Selected</dt><dd id="sSel">0</dd>
+        <dt>Groups</dt><dd id="sGroups">–</dd>
+        <dt>Moving</dt><dd id="sMoving">–</dd>
+        <dt>Settled at targets</dt><dd id="sSettled">–</dd>
+        <dt>Arrivals/s per group, 30 s</dt><dd id="sArr">–</dd>
+        <dt>Workers</dt><dd id="sWorkers">–</dd>
+      </dl>
+    </section>
+    <section class="group">
+      <h2>Controls</h2>
+      <ul class="keys">
+        <li>Left-drag selects agents; Shift adds.</li>
+        <li>Click with agents selected sends them there.</li>
+        <li>Right-drag pans; the wheel zooms. On touch screens, two fingers pan and pinch to zoom.</li>
+        <li>1–4 tools, G switches CPU and GPU, B switches neighbour search, V arrows, H heat, F arrows of the selection, Esc clears, Space pauses, Home fits the map.</li>
+      </ul>
+    </section>
+  </aside>
+</main>
+<script id="src-shared">
+// Flow Field Lab 2: constants, validated parameters and geometry helpers shared by both workers.
+var FF = (function () {
+  'use strict';
+  const W = 1024, H = 1024, N = W * H, SEC = 32, NSX = W / SEC, NSY = H / SEC, NSEC = NSX * NSY;
+  const SQ2 = Math.SQRT2;
+  // Neighbour order E, W, S, N, SE, SW, NE, NW (y grows downwards).
+  const NBX = [1, -1, 0, 0, 1, -1, 1, -1];
+  const NBY = [0, 0, 1, -1, 1, 1, -1, -1];
+  const NBL = [1, 1, 1, 1, SQ2, SQ2, SQ2, SQ2];
+  const OPP = [1, 0, 3, 2, 7, 6, 5, 4];
+  const DN = NBX.map((x, k) => NBY[k] * W + x);
+
+  // Behaviour parameters validated in the counter-flow prototype (plan: "Congestion with interleaved flow fields").
+  const P = {
+    radius: 0.1, speed: 2.5, dt: 1 / 120, dirs: 32, maxTurnSteps: 8,
+    escapeAfter: 0.25, escapeTries: 4, flipAfter: 0.5,
+    lambda: 0.5, passes: 8,
+    gain: 0.25, decay: 1,
+    kIso: 0.25, kJam: 1.5, kCounter: 2, kSide: 0.3, sideRange: 3,
+    anticipate: 0.7, lookAhead: 1.0, oncRef: 0.5,
+    passScale: 0.6, passDot: -0.3,
+  };
+
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const open = (wall, x, y) => x >= 0 && y >= 0 && x < W && y < H && wall[y * W + x] === 0;
+
+  // Legal-move bitmask and near-wall flag for tiles in [x0, x1] x [y0, y1] (clamped).
+  function geometry(wall, moveMask, nearWall, x0, y0, x1, y1) {
+    x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(W - 1, x1); y1 = Math.min(H - 1, y1);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        let m = 0, nw = 0;
+        for (let k = 0; k < 8; k++) {
+          const nx = x + NBX[k], ny = y + NBY[k];
+          if (!open(wall, nx, ny)) { nw = 1; continue; }
+          if (k >= 4 && (!open(wall, nx, y) || !open(wall, x, ny))) continue; // no corner cutting
+          m |= 1 << k;
+        }
+        const i = y * W + x;
+        moveMask[i] = wall[i] ? 0 : m;
+        nearWall[i] = nw;
+      }
+    }
+  }
+
+  // Nearest wall within R tiles: distance and unit direction, for the keep-right lane cost.
+  function laneField(wall, wallD, wallVX, wallVY, x0, y0, x1, y1, R) {
+    x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(W - 1, x1); y1 = Math.min(H - 1, y1);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = y * W + x;
+        wallD[i] = 1e9; wallVX[i] = 0; wallVY[i] = 0;
+        if (wall[i]) continue;
+        let best = 1e9, bx = 0, by = 0;
+        for (let yy = Math.max(0, y - R); yy <= Math.min(H - 1, y + R); yy++) {
+          for (let xx = Math.max(0, x - R); xx <= Math.min(W - 1, x + R); xx++) {
+            if (!wall[yy * W + xx]) continue;
+            const dx = xx - x, dy = yy - y, d = Math.sqrt(dx * dx + dy * dy);
+            if (d < best) { best = d; bx = dx; by = dy; }
+          }
+        }
+        if (best < 1e9) { wallD[i] = best; wallVX[i] = bx / best; wallVY[i] = by / best; }
+      }
+    }
+  }
+
+  const sectorOf = (x, y) => (y >> 5) * NSX + (x >> 5);
+
+  // Agent sizes (radius in tiles) and the field class each one navigates with. A class's field is built
+  // on walls thickened to its largest radius, so big agents are routed around gaps they cannot fit.
+  const SIZES = [0.1, 0.25, 0.5, 1.0, 2.0];
+  const SIZE_NAMES = ['Small', 'Medium', 'Large', 'Huge', 'Giant'];
+  const CLASS_RMAX = [0.35, 1.0, 2.0];
+  const CLASS_OF = SIZES.map((r) => (r <= CLASS_RMAX[0] ? 0 : r <= CLASS_RMAX[1] ? 1 : 2));
+  const MIX = [0.72, 0.15, 0.08, 0.04, 0.01]; // default share of each size in mixed scenes
+
+  // Clearance: distance from each tile centre to the nearest wall square (the map edge counts as wall), capped at R.
+  function clearance(wall, out, x0, y0, x1, y1, R) {
+    x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(W - 1, x1); y1 = Math.min(H - 1, y1);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = y * W + x;
+        if (wall[i]) { out[i] = 0; continue; }
+        let best = R;
+        for (let yy = y - R; yy <= y + R; yy++) {
+          const dy = Math.max(0, Math.abs(yy - y) - 0.5);
+          if (dy >= best) continue;
+          for (let xx = x - R; xx <= x + R; xx++) {
+            if (xx >= 0 && yy >= 0 && xx < W && yy < H && !wall[yy * W + xx]) continue;
+            const dx = Math.max(0, Math.abs(xx - x) - 0.5), d = Math.sqrt(dx * dx + dy * dy);
+            if (d < best) best = d;
+          }
+        }
+        out[i] = best;
+      }
+    }
+  }
+
+  return { W, H, N, SEC, NSX, NSY, NSEC, SQ2, NBX, NBY, NBL, OPP, DN, P, mulberry32, open, geometry, laneField, sectorOf,
+    SIZES, SIZE_NAMES, CLASS_RMAX, CLASS_OF, MIX, clearance };
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = FF;
+
+</script>
+<script id="src-field">
+// Flow Field Lab 2: field worker core. Sectors and portals, a portal-graph route per group, and
+// on-demand 32 x 32 sector flow fields built with the validated congestion costs.
+var FieldCore = (function () {
+  'use strict';
+  const FFx = (typeof FF !== 'undefined') ? FF : require('./shared.js');
+  const { W, H, N, SEC, NSX, NSY, NSEC, NBX, NBY, NBL, OPP, DN, P, geometry, laneField } = FFx;
+  const EPS = 1e-6, INF = Infinity, PORTAL_MAX = 16;
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+  class FieldCore {
+    // opts.cls: size class this core serves; opts.shared: the class-0 core whose congestion and lane data
+    // (distance to real walls) are shared, so a class core only owns its thickened walls and portals.
+    constructor(opts) {
+      opts = opts || {};
+      this.cls = opts.cls || 0; const sh = opts.shared || null; this.shared = sh;
+      this.wall = new Uint8Array(N); this.moveMask = new Uint8Array(N); this.nearWall = new Uint8Array(N);
+      if (sh) { this.wallD = sh.wallD; this.wallVX = sh.wallVX; this.wallVY = sh.wallVY; this.rho = sh.rho; this.jam = sh.jam; this.F4 = sh.F4; }
+      else {
+        this.wallD = new Float32Array(N).fill(1e9); this.wallVX = new Float32Array(N); this.wallVY = new Float32Array(N);
+        this.rho = new Float32Array(N); this.jam = new Float32Array(N); this.F4 = new Float32Array(4 * N);
+      }
+      this.congSecs = new Set();
+      // Sector-sized scratch
+      this.ld = new Float64Array(1024); this.lseed = new Float64Array(1024); this.lexit = new Int8Array(1024);
+      this.lorder = new Int32Array(1024); this.lreach = 0;
+      this.hc = new Int32Array(8 * 1024 + 8); this.hk = new Float64Array(8 * 1024 + 8); this.hn = 0;
+      this.dX = new Float32Array(1024); this.dY = new Float32Array(1024);
+      this.bAX = new Float32Array(1024); this.bAY = new Float32Array(1024); this.bBX = new Float32Array(1024); this.bBY = new Float32Array(1024);
+      // Portals
+      this.portals = []; this.free = []; this.borders = new Map();
+      this.secPortals = Array.from({ length: NSEC }, () => []);
+      this.secEdges = new Array(NSEC).fill(null);
+      // Groups and jobs
+      this.groups = new Map();
+      this.demand = new Int32Array(0); this.built = new Map(); this.pendingNew = [];
+      this.focus = 0; this.angleCache = new Map(); this.distCache = new Map(); this.flowCache = new Map();
+      // 34 x 34 padded smoothing buffers: the sector plus a one-tile apron read from neighbouring sector fields
+      this.pAX = new Float32Array(1156); this.pAY = new Float32Array(1156); this.pBX = new Float32Array(1156); this.pBY = new Float32Array(1156); this.pM = new Uint8Array(1156);
+      this.ready = false;
+      this.post = () => {}; this.postPeer = () => {};
+      this.st = { jobs: 0, ms: 0, t0: now() };
+    }
+
+    // ------------------------------------------------------------- messages
+    handle(m) {
+      switch (m.type) {
+        case 'walls': this.setWalls(m.walls); break;
+        case 'edits': this.applyEdits(m.tiles, m.values); break;
+        case 'groups': this.syncGroups(m.list); break;
+        case 'demand': this.setDemand(m); break;
+        case 'focus': this.setFocus(m.g); break;
+        case 'route': this.route = m.to; break;
+      }
+    }
+
+    setWalls(walls) {
+      const t0 = now();
+      this.wall.set(walls);
+      geometry(this.wall, this.moveMask, this.nearWall, 0, 0, W - 1, H - 1);
+      if (!this.shared) laneField(this.wall, this.wallD, this.wallVX, this.wallVY, 0, 0, W - 1, H - 1, P.sideRange);
+      this.portals = []; this.free = []; this.borders.clear();
+      for (const l of this.secPortals) l.length = 0;
+      for (let sy = 0; sy < NSY; sy++) for (let sx = 0; sx < NSX; sx++) {
+        if (sx < NSX - 1) this.buildBorder(0, sx, sy);
+        if (sy < NSY - 1) this.buildBorder(1, sx, sy);
+      }
+      for (let s = 0; s < NSEC; s++) this.buildEdges(s);
+      if (!this.shared) { this.rho.fill(0); this.jam.fill(0); this.F4.fill(0); this.congSecs.clear(); }
+      for (const g of this.groups.values()) this.computeRoute(g);
+      this.built.clear(); this.angleCache.clear(); this.distCache.clear(); this.flowCache.clear();
+      this.ready = true;
+      this.post({ type: 'fieldReady', ms: now() - t0, portals: this.portals.length - this.free.length });
+    }
+
+    applyEdits(tiles, values) {
+      let x0 = W, y0 = H, x1 = -1, y1 = -1;
+      for (let i = 0; i < tiles.length; i++) {
+        const t = tiles[i]; this.wall[t] = values[i];
+        const x = t % W, y = (t / W) | 0;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+      if (x1 < 0) return;
+      this.rebuildRect(x0, y0, x1, y1);
+    }
+    // Walls in [x0, x1] x [y0, y1] changed: refresh geometry, portals, edges and routes around them.
+    rebuildRect(x0, y0, x1, y1) {
+      geometry(this.wall, this.moveMask, this.nearWall, x0 - 1, y0 - 1, x1 + 1, y1 + 1);
+      const R = P.sideRange;
+      if (!this.shared) laneField(this.wall, this.wallD, this.wallVX, this.wallVY, x0 - R, y0 - R, x1 + R, y1 + R, R);
+      // Sectors touched (with a one-tile margin) get their borders and edges rebuilt.
+      const sx0 = Math.max(0, (x0 - 1) >> 5), sx1 = Math.min(NSX - 1, (x1 + 1) >> 5);
+      const sy0 = Math.max(0, (y0 - 1) >> 5), sy1 = Math.min(NSY - 1, (y1 + 1) >> 5);
+      const touched = new Set();
+      for (let sy = sy0; sy <= sy1; sy++) for (let sx = sx0; sx <= sx1; sx++) {
+        if (sx < NSX - 1) this.buildBorder(0, sx, sy);
+        if (sx > 0) this.buildBorder(0, sx - 1, sy);
+        if (sy < NSY - 1) this.buildBorder(1, sx, sy);
+        if (sy > 0) this.buildBorder(1, sx, sy - 1);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const ax = sx + dx, ay = sy + dy;
+          if (ax >= 0 && ay >= 0 && ax < NSX && ay < NSY) touched.add(ay * NSX + ax);
+        }
+      }
+      for (const s of touched) this.buildEdges(s);
+      for (const g of this.groups.values()) { this.computeDisc(g); this.computeRoute(g); }
+      this.built.clear(); this.distCache.clear(); this.flowCache.clear();
+    }
+
+    syncGroups(list) {
+      const seen = new Set();
+      for (const d of list) {
+        seen.add(d.id);
+        const g = this.groups.get(d.id);
+        if (!g || g.cx !== d.cx || g.cy !== d.cy || g.r !== d.r) {
+          const ng = { id: d.id, cx: d.cx, cy: d.cy, r: d.r, tx: Math.floor(d.cx), ty: Math.floor(d.cy), route: null, disc: new Map() };
+          this.groups.set(d.id, ng);
+          this.computeDisc(ng); this.computeRoute(ng);
+          for (const k of Array.from(this.built.keys())) if (Math.floor(k / NSEC) === d.id) this.built.delete(k);
+          for (const k of Array.from(this.angleCache.keys())) if (Math.floor(k / NSEC) === d.id) this.angleCache.delete(k);
+          for (const k of Array.from(this.distCache.keys())) if (Math.floor(k / NSEC) === d.id) this.distCache.delete(k);
+          for (const k of Array.from(this.flowCache.keys())) if (Math.floor(k / NSEC) === d.id) this.flowCache.delete(k);
+        }
+      }
+      for (const id of Array.from(this.groups.keys())) if (!seen.has(id)) {
+        this.groups.delete(id);
+        for (const k of Array.from(this.built.keys())) if (Math.floor(k / NSEC) === id) this.built.delete(k);
+        for (const k of Array.from(this.angleCache.keys())) if (Math.floor(k / NSEC) === id) this.angleCache.delete(k);
+        for (const k of Array.from(this.distCache.keys())) if (Math.floor(k / NSEC) === id) this.distCache.delete(k);
+        for (const k of Array.from(this.flowCache.keys())) if (Math.floor(k / NSEC) === id) this.flowCache.delete(k);
+      }
+    }
+
+    setDemand(m) { this.demand = m.pairs; this.setCongestion(m.secs, m.data); }
+    // Congestion snapshot: per sector 1024 rho, 1024 jam, 4096 direction channels.
+    setCongestion(secs, data) {
+      const next = new Set();
+      for (let i = 0; i < secs.length; i++) {
+        const s = secs[i]; next.add(s);
+        const ox = (s % NSX) * SEC, oy = ((s / NSX) | 0) * SEC, base = i * 6144;
+        for (let li = 0; li < 1024; li++) {
+          const c = (oy + (li >> 5)) * W + ox + (li & 31);
+          this.rho[c] = data[base + li]; this.jam[c] = data[base + 1024 + li];
+          const b4 = base + 2048 + li * 4;
+          this.F4[4 * c] = data[b4]; this.F4[4 * c + 1] = data[b4 + 1]; this.F4[4 * c + 2] = data[b4 + 2]; this.F4[4 * c + 3] = data[b4 + 3];
+        }
+      }
+      for (const s of this.congSecs) if (!next.has(s)) this.clearSector(s);
+      this.congSecs = next;
+    }
+
+    clearSector(s) {
+      const ox = (s % NSX) * SEC, oy = ((s / NSX) | 0) * SEC;
+      for (let ly = 0; ly < SEC; ly++) {
+        const c0 = (oy + ly) * W + ox;
+        this.rho.fill(0, c0, c0 + SEC); this.jam.fill(0, c0, c0 + SEC); this.F4.fill(0, 4 * c0, 4 * (c0 + SEC));
+      }
+    }
+
+    setFocus(g) {
+      this.focus = g;
+      this.post({ type: 'anglesClear' });
+      for (const [k, data] of this.angleCache) if (Math.floor(k / NSEC) === g) {
+        const copy = data.slice();
+        this.post({ type: 'angles', g, c: this.cls, s: k % NSEC, data: copy }, [copy.buffer]);
+      }
+    }
+
+    // ------------------------------------------------------------- portals
+    // kind 0: vertical border between (sx, sy) and (sx + 1, sy); kind 1: horizontal, (sx, sy) and (sx, sy + 1).
+    buildBorder(kind, sx, sy) {
+      const key = kind * NSEC + sy * NSX + sx;
+      const old = this.borders.get(key);
+      if (old) for (const slot of old) this.removePortal(slot);
+      const list = [];
+      const a = sy * NSX + sx, b = kind === 0 ? a + 1 : a + NSX;
+      let run = [];
+      const flush = () => {
+        for (let i = 0; i < run.length; i += PORTAL_MAX) {
+          const part = run.slice(i, i + PORTAL_MAX);
+          list.push(this.addPortal(a, b, kind === 0 ? 0 : 2, part));
+        }
+        run = [];
+      };
+      for (let i = 0; i < SEC; i++) {
+        let ta, tb;
+        if (kind === 0) { const y = sy * SEC + i, xa = sx * SEC + SEC - 1; ta = y * W + xa; tb = ta + 1; }
+        else { const x = sx * SEC + i, ya = sy * SEC + SEC - 1; ta = ya * W + x; tb = ta + W; }
+        if (!this.wall[ta] && !this.wall[tb]) run.push([ta, tb]); else if (run.length) flush();
+      }
+      if (run.length) flush();
+      this.borders.set(key, list);
+    }
+
+    addPortal(a, b, kAB, pairs) {
+      const slot = this.free.length ? this.free.pop() : this.portals.length;
+      const ci = (pairs.length - 1) >> 1; // the middle pair: all route and edge costs are measured here
+      const p = { slot, a, b, kAB, ci, tilesA: Int32Array.from(pairs, (q) => q[0]), tilesB: Int32Array.from(pairs, (q) => q[1]), idxA: -1, idxB: -1 };
+      this.portals[slot] = p;
+      this.secPortals[a].push(slot); this.secPortals[b].push(slot);
+      return slot;
+    }
+
+    removePortal(slot) {
+      const p = this.portals[slot];
+      if (!p) return;
+      for (const s of [p.a, p.b]) { const l = this.secPortals[s], i = l.indexOf(slot); if (i >= 0) l.splice(i, 1); }
+      this.portals[slot] = null; this.free.push(slot);
+    }
+
+    // ------------------------------------------------------------- local Dijkstra inside one sector
+    hPush(c, key) { let i = this.hn++; const C = this.hc, K = this.hk; while (i > 0) { const p = (i - 1) >> 1; if (K[p] <= key) break; C[i] = C[p]; K[i] = K[p]; i = p; } C[i] = c; K[i] = key; }
+    hPop() { const C = this.hc, K = this.hk, top = C[0]; this.pk = K[0]; const n = --this.hn; if (n > 0) { const lc = C[n], lk = K[n]; let i = 0; for (;;) { let l = 2 * i + 1; if (l >= n) break; const r = l + 1; if (r < n && K[r] < K[l]) l = r; if (K[l] >= lk) break; C[i] = C[l]; K[i] = K[l]; i = l; } C[i] = lc; K[i] = lk; } return top; }
+
+    // Cost of entering tile n along unit direction (ex, ey): validated four-rule formula.
+    cost(n, ex, ey) {
+      let c = 1 + P.kIso * this.rho[n] + P.kJam * this.jam[n];
+      const wd = this.wallD[n];
+      if (wd < P.sideRange) { const side = this.wallVX[n] * -ey + this.wallVY[n] * ex; if (side < 0) c += P.kSide * -side * (1 - wd / P.sideRange); }
+      const b = 4 * n, F = this.F4;
+      const onc = (ex > 0 ? ex * F[b + 1] : -ex * F[b]) + (ey > 0 ? ey * F[b + 3] : -ey * F[b + 2]);
+      return c * (1 + P.kCounter * onc);
+    }
+
+    // Dijkstra over the sector's tiles from seeds already placed in this.ld (Infinity = unseeded).
+    localDijkstra(s, dynamic) {
+      const ox = (s % NSX) * SEC, oy = ((s / NSX) | 0) * SEC, ld = this.ld;
+      this.hn = 0; this.lreach = 0;
+      for (let li = 0; li < 1024; li++) if (ld[li] < INF) this.hPush(li, ld[li]);
+      while (this.hn > 0) {
+        const u = this.hPop(), d = this.pk;
+        if (d > ld[u]) continue;
+        this.lorder[this.lreach++] = u;
+        const ux = u & 31, uy = u >> 5, cu = (oy + uy) * W + ox + ux, m = this.moveMask[cu];
+        for (let k = 0; k < 8; k++) {
+          if (!(m & (1 << k))) continue;
+          const vx = ux + NBX[k], vy = uy + NBY[k];
+          if (vx < 0 || vy < 0 || vx >= SEC || vy >= SEC) continue;
+          const v = (vy << 5) | vx;
+          // the agent at v steps into u, along -(NBX[k], NBY[k])
+          const w = dynamic ? NBL[k] * this.cost(cu, -NBX[k] / NBL[k], -NBY[k] / NBL[k]) : NBL[k];
+          const nd = d + w;
+          if (nd < ld[v] - EPS) { ld[v] = nd; this.hPush(v, nd); }
+        }
+      }
+    }
+
+    local(c) { return (((c / W) | 0) & 31) * 32 + ((c % W) & 31); }
+
+    // Static portal-to-portal distances inside sector s.
+    buildEdges(s) {
+      const ids = this.secPortals[s].slice(), k = ids.length;
+      const cost = new Float32Array(k * k).fill(INF);
+      for (let i = 0; i < k; i++) {
+        const p = this.portals[ids[i]];
+        if (p.a === s) p.idxA = i; else p.idxB = i;
+        this.ld.fill(INF);
+        this.ld[this.local((p.a === s ? p.tilesA : p.tilesB)[p.ci])] = 0;
+        this.localDijkstra(s, false);
+        for (let j = 0; j < k; j++) {
+          if (i === j) { cost[i * k + j] = 0; continue; }
+          const q = this.portals[ids[j]];
+          cost[i * k + j] = this.ld[this.local((q.a === s ? q.tilesA : q.tilesB)[q.ci])];
+        }
+      }
+      this.secEdges[s] = { ids: Int32Array.from(ids), cost, k };
+    }
+
+    // ------------------------------------------------------------- routes
+    computeDisc(g) {
+      g.disc = new Map();
+      const r2 = g.r * g.r;
+      for (let y = Math.max(0, Math.floor(g.cy - g.r)); y <= Math.min(H - 1, Math.ceil(g.cy + g.r)); y++) {
+        for (let x = Math.max(0, Math.floor(g.cx - g.r)); x <= Math.min(W - 1, Math.ceil(g.cx + g.r)); x++) {
+          if ((x + 0.5 - g.cx) ** 2 + (y + 0.5 - g.cy) ** 2 > r2) continue;
+          const c = y * W + x; if (this.wall[c]) continue;
+          const s = (y >> 5) * NSX + (x >> 5);
+          let l = g.disc.get(s); if (!l) { l = []; g.disc.set(s, l); } l.push(c);
+        }
+      }
+    }
+
+    computeRoute(g) {
+      const n = this.portals.length, route = new Float64Array(n).fill(INF), via = new Int32Array(n).fill(-1);
+      // Portal-graph heap (lazy deletion), separate from the sector heap
+      const hc = [], hk = [];
+      const push = (c, k) => { let i = hc.length; hc.push(c); hk.push(k); while (i > 0) { const p = (i - 1) >> 1; if (hk[p] <= k) break; hc[i] = hc[p]; hk[i] = hk[p]; i = p; } hc[i] = c; hk[i] = k; };
+      const pop = () => { const top = hc[0], tk = hk[0]; const lc = hc.pop(), lk = hk.pop(); if (hc.length) { let i = 0; const n2 = hc.length; for (;;) { let l = 2 * i + 1; if (l >= n2) break; const r = l + 1; if (r < n2 && hk[r] < hk[l]) l = r; if (hk[l] >= lk) break; hc[i] = hc[l]; hk[i] = hk[l]; i = l; } hc[i] = lc; hk[i] = lk; } return [top, tk]; };
+      for (const [s, cells] of g.disc) {
+        this.ld.fill(INF);
+        for (const c of cells) this.ld[this.local(c)] = 0;
+        this.localDijkstra(s, false);
+        for (const slot of this.secPortals[s]) {
+          const p = this.portals[slot];
+          const m = this.ld[this.local((p.a === s ? p.tilesA : p.tilesB)[p.ci])];
+          if (m + 1 < route[slot]) { route[slot] = m + 1; via[slot] = s; push(slot, m + 1); }
+        }
+      }
+      while (hc.length) {
+        const [slot, d] = pop();
+        if (d > route[slot]) continue;
+        const p = this.portals[slot]; if (!p) continue;
+        for (const s of [p.a, p.b]) {
+          const e = this.secEdges[s]; if (!e) continue;
+          const i = p.a === s ? p.idxA : p.idxB; if (i < 0) continue;
+          for (let j = 0; j < e.k; j++) {
+            if (j === i) continue;
+            const w = e.cost[i * e.k + j]; if (w === INF) continue;
+            const q = e.ids[j], nd = d + w + 1;
+            if (nd < route[q]) { route[q] = nd; via[q] = s; push(q, nd); }
+          }
+        }
+      }
+      g.route = route; g.via = via; // via: the sector through which each portal's best path continues
+    }
+
+    // ------------------------------------------------------------- sector field for one group
+    buildSlot(g, s) {
+      const ox = (s % NSX) * SEC, oy = ((s / NSX) | 0) * SEC;
+      const ld = this.ld, seed = this.lseed, exit = this.lexit;
+      seed.fill(INF); exit.fill(-1);
+      const disc = g.disc.get(s);
+      if (disc) for (const c of disc) seed[this.local(c)] = 0;
+      if (g.route) for (const slot of this.secPortals[s]) {
+        const p = this.portals[slot], rc = g.route[slot];
+        if (!(rc < INF) || g.via[slot] === s) continue; // only portals whose path continues on the far side are exits
+        const tiles = p.a === s ? p.tilesA : p.tilesB, far = p.a === s ? p.tilesB : p.tilesA, kOut = p.a === s ? p.kAB : OPP[p.kAB];
+        const fd = this.distCache.get(g.id * NSEC + (p.a === s ? p.b : p.a)); // the next sector's own distances, if built
+        for (let i = 0; i < tiles.length; i++) {
+          const li = this.local(tiles[i]);
+          let v = rc + Math.abs(i - p.ci);
+          if (fd) { const dv = fd[this.local(far[i])]; if (dv < INF) v = dv + 1; }
+          if (v < seed[li]) { seed[li] = v; exit[li] = kOut; }
+        }
+      }
+      ld.set(seed);
+      this.localDijkstra(s, true);
+      this.distCache.set(g.id * NSEC + s, Float32Array.from(ld));
+      // Direction pass with the straight-line tie-break toward the group's target
+      const dX = this.dX, dY = this.dY; dX.fill(0); dY.fill(0);
+      const tx = g.tx, ty = g.ty;
+      for (let j = 0; j < this.lreach; j++) {
+        const li = this.lorder[j], dli = ld[li];
+        if (dli === 0) continue; // inside the target disc
+        if (exit[li] >= 0 && Math.abs(dli - seed[li]) <= EPS) { const k = exit[li]; dX[li] = NBX[k] / NBL[k]; dY[li] = NBY[k] / NBL[k]; continue; }
+        const lx = li & 31, ly = li >> 5, c = (oy + ly) * W + ox + lx, m = this.moveMask[c];
+        let best = -1, bOff = -1, bDiag = 2;
+        for (let k = 0; k < 8; k++) {
+          if (!(m & (1 << k))) continue;
+          const nx = lx + NBX[k], ny = ly + NBY[k];
+          if (nx < 0 || ny < 0 || nx >= SEC || ny >= SEC) continue;
+          const ln = (ny << 5) | nx; if (ld[ln] === INF) continue;
+          const w = NBL[k] * this.cost(c + DN[k], NBX[k] / NBL[k], NBY[k] / NBL[k]);
+          if (Math.abs(ld[ln] + w - dli) > EPS) continue;
+          const off = Math.min(Math.abs(ox + nx - tx), Math.abs(oy + ny - ty)), dg = k >= 4 ? 1 : 0;
+          if (off > bOff || (off === bOff && dg < bDiag)) { best = k; bOff = off; bDiag = dg; }
+        }
+        if (best >= 0) { dX[li] = NBX[best] / NBL[best]; dY[li] = NBY[best] / NBL[best]; }
+      }
+      // Smoothing over a padded 34 x 34 grid. The apron holds the neighbouring sectors' finished vectors for
+      // this group, so seams blend with the real field; a tile with any neighbour unknown keeps its raw vector.
+      const AX = this.pAX, AY = this.pAY, BX = this.pBX, BY = this.pBY, PM = this.pM;
+      AX.fill(0); AY.fill(0); PM.fill(0);
+      for (let ly = 0; ly < SEC; ly++) for (let lx = 0; lx < SEC; lx++) { const pi = (ly + 1) * 34 + lx + 1, li = ly * 32 + lx; AX[pi] = dX[li]; AY[pi] = dY[li]; PM[pi] = 1; }
+      for (let py = 0; py < 34; py++) for (let px = 0; px < 34; px++) {
+        if (py > 0 && py < 33 && px > 0 && px < 33) continue;
+        const gx0 = ox + px - 1, gy0 = oy + py - 1;
+        if (gx0 < 0 || gy0 < 0 || gx0 >= W || gy0 >= H) continue;
+        const cache = this.flowCache.get(g.id * NSEC + (gy0 >> 5) * NSX + (gx0 >> 5));
+        if (!cache) continue;
+        const li = ((gy0 & 31) << 5) | (gx0 & 31), pi = py * 34 + px;
+        AX[pi] = cache.fx[li]; AY[pi] = cache.fy[li]; PM[pi] = 1;
+      }
+      BX.set(AX); BY.set(AY);
+      let fx = AX, fy = AY, gx = BX, gy = BY;
+      const lam = P.lambda;
+      for (let pass = 0; pass < P.passes; pass++) {
+        for (let j = 0; j < this.lreach; j++) {
+          const li = this.lorder[j], lx = li & 31, ly = li >> 5;
+          if (ld[li] === 0 || this.nearWall[(oy + ly) * W + ox + lx]) continue;
+          const pi = (ly + 1) * 34 + lx + 1;
+          if (!(PM[pi + 1] & PM[pi - 1] & PM[pi + 34] & PM[pi - 34] & PM[pi + 35] & PM[pi + 33] & PM[pi - 33] & PM[pi - 35])) continue;
+          const sx = fx[pi + 1] + fx[pi - 1] + fx[pi + 34] + fx[pi - 34] + fx[pi + 35] + fx[pi + 33] + fx[pi - 33] + fx[pi - 35];
+          const sy = fy[pi + 1] + fy[pi - 1] + fy[pi + 34] + fy[pi - 34] + fy[pi + 35] + fy[pi + 33] + fy[pi - 33] + fy[pi - 35];
+          const vx = (1 - lam) * fx[pi] + lam * sx * 0.125, vy = (1 - lam) * fy[pi] + lam * sy * 0.125, l = Math.sqrt(vx * vx + vy * vy);
+          if (l > 1e-3) { gx[pi] = vx / l; gy[pi] = vy / l; } else { gx[pi] = dX[li]; gy[pi] = dY[li]; }
+        }
+        let t = fx; fx = gx; gx = t; t = fy; fy = gy; gy = t;
+      }
+      const outX = new Float32Array(1024), outY = new Float32Array(1024);
+      for (let ly = 0; ly < SEC; ly++) for (let lx = 0; lx < SEC; lx++) { const pi = (ly + 1) * 34 + lx + 1, li = ly * 32 + lx; outX[li] = fx[pi]; outY[li] = fy[pi]; }
+      this.flowCache.set(g.id * NSEC + s, { fx: outX.slice(), fy: outY.slice() });
+      return { fx: outX, fy: outY };
+    }
+
+    static angles(fx, fy) {
+      const a = new Uint8Array(1024);
+      for (let i = 0; i < 1024; i++) {
+        if (fx[i] === 0 && fy[i] === 0) { a[i] = 255; continue; }
+        let t = Math.atan2(fy[i], fx[i]); if (t < 0) t += 2 * Math.PI;
+        a[i] = Math.round(t / (2 * Math.PI) * 255) % 255;
+      }
+      return a;
+    }
+
+    // ------------------------------------------------------------- scheduling
+    nextJob(minAgeMs) {
+      const d = this.demand, t = now();
+      let best = -1, bestAge = -1;
+      for (let i = 0; i < d.length; i += 2) {
+        const g = d[i], s = d[i + 1];
+        if (!this.groups.has(g)) continue;
+        const key = g * NSEC + s, last = this.built.get(key);
+        if (last === undefined) return key;
+        const age = t - last;
+        if (age >= minAgeMs && age > bestAge) { bestAge = age; best = key; }
+      }
+      return best;
+    }
+
+    // Build sector fields until the time budget or job cap runs out. Returns jobs done.
+    work(budgetMs, maxJobs, minAgeMs) {
+      if (!this.ready) return 0;
+      const t0 = now(); let jobs = 0;
+      while (jobs < (maxJobs || 1e9) && now() - t0 < budgetMs) {
+        const key = this.nextJob(minAgeMs === undefined ? 150 : minAgeMs);
+        if (key < 0) break;
+        const gid = Math.floor(key / NSEC), s = key % NSEC, g = this.groups.get(gid);
+        const tj = now();
+        const out = this.buildSlot(g, s);
+        this.st.ms += now() - tj; this.st.jobs++;
+        this.built.set(key, now());
+        const ang = FieldCore.angles(out.fx, out.fy);
+        this.angleCache.set(key, ang);
+        const slotMsg = { type: 'slot', g: gid, c: this.cls, s, fx: out.fx, fy: out.fy };
+        if (this.route === 'main') this.post(slotMsg, [out.fx.buffer, out.fy.buffer]); else this.postPeer(slotMsg, [out.fx.buffer, out.fy.buffer]);
+        if (gid === this.focus) { const copy = ang.slice(); this.post({ type: 'angles', g: gid, c: this.cls, s, data: copy }, [copy.buffer]); }
+        jobs++;
+      }
+      const t = now();
+      if (t - this.st.t0 > 500) {
+        this.post({ type: 'fieldStats', jobsPerSec: this.st.jobs / ((t - this.st.t0) / 1000), msPerJob: this.st.jobs ? this.st.ms / this.st.jobs : 0, demand: this.demand.length / 2, portals: this.portals.length - this.free.length });
+        this.st = { jobs: 0, ms: 0, t0: t };
+      }
+      return jobs;
+    }
+  }
+  return FieldCore;
+})();
+if (typeof module !== 'undefined' && module.exports) { module.exports = FieldCore; module.exports.FieldCore = FieldCore; }
+
+// Flow Field Lab 3: one field core per size class. Class 0 sees the real walls; classes 1 and 2 see walls
+// thickened by their largest radius (clearance below it counts as wall). Congestion and lane data are shared.
+var FieldHost = (function () {
+  'use strict';
+  const FFx = (typeof FF !== 'undefined') ? FF : require('./shared.js');
+  const FC = (typeof FieldCore !== 'undefined') ? FieldCore : require('./field.js');
+  const { W, H, N, CLASS_RMAX } = FFx;
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  class FieldHost {
+    constructor() {
+      this.cores = [null, null, null]; this.stale = [false, false, false]; this.want = [true, false, false]; this.pairs = [null, null, null];
+      this.clear = new Float32Array(N); this.walls = null; this.groupList = []; this.focus = { g: 0, c: 0 };
+      this.post = () => {}; this.postPeer = () => {};
+      this.cores[0] = this.make(0);
+      this.st = { jobs: 0, ms: 0, t0: now() };
+    }
+    make(c) {
+      const core = new FC({ cls: c, shared: c ? this.cores[0] : null });
+      core.post = (m, t) => { if (m.type !== 'fieldStats' && m.type !== 'fieldReady') this.post(m, t); };
+      core.postPeer = (m, t) => (this.route === 'main' ? this.post(m, t) : this.postPeer(m, t)); // fields go to whoever steps agents
+      core.focus = -1;
+      return core;
+    }
+    thickened(c, out, x0, y0, x1, y1) {
+      x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(W - 1, x1); y1 = Math.min(H - 1, y1);
+      const r = CLASS_RMAX[c];
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * W + x; out[i] = this.walls[i] || this.clear[i] < r ? 1 : 0; }
+    }
+    usable(c) { return !!this.cores[c] && !this.stale[c] && this.cores[c].ready; }
+    // (Re)build a big-agent class core: about a second of portal and edge work, so it runs only when needed
+    // and after the small-agent fields are being served.
+    build(c) {
+      const core = this.cores[c] || (this.cores[c] = this.make(c));
+      this.thickened(c, core.wall, 0, 0, W - 1, H - 1);
+      core.setWalls(core.wall.slice());
+      core.syncGroups(this.groupList);
+      this.stale[c] = false;
+      core.demand = this.pairs[c] || new Int32Array(0);
+      if (this.focus.c === c) core.setFocus(this.focus.g); else core.focus = -1;
+    }
+    get ready() { return this.cores[0].ready; }
+    handle(m) {
+      switch (m.type) {
+        case 'walls': {
+          const t0 = now();
+          this.walls = m.walls.slice();
+          FFx.clearance(this.walls, this.clear, 0, 0, W - 1, H - 1, 3);
+          this.cores[0].setWalls(this.walls);
+          this.stale[1] = this.stale[2] = true; this.want[1] = this.want[2] = false;
+          const core0 = this.cores[0];
+          this.post({ type: 'fieldReady', ms: now() - t0, portals: core0.portals.length - core0.free.length });
+          break;
+        }
+        case 'edits': {
+          const { tiles, values } = m; let x0 = W, y0 = H, x1 = -1, y1 = -1;
+          for (let i = 0; i < tiles.length; i++) { const t = tiles[i]; this.walls[t] = values[i]; const x = t % W, y = (t / W) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+          if (x1 < 0) break;
+          FFx.clearance(this.walls, this.clear, x0 - 3, y0 - 3, x1 + 3, y1 + 3, 3);
+          this.cores[0].applyEdits(tiles, values);
+          for (let c = 1; c < 3; c++) if (this.usable(c)) { this.thickened(c, this.cores[c].wall, x0 - 3, y0 - 3, x1 + 3, y1 + 3); this.cores[c].rebuildRect(x0 - 3, y0 - 3, x1 + 3, y1 + 3); }
+          break;
+        }
+        case 'groups': this.groupList = m.list; for (let c = 0; c < 3; c++) if (c === 0 || this.usable(c)) this.cores[c].syncGroups(m.list); break;
+        case 'demand': {
+          this.cores[0].setCongestion(m.secs, m.data);
+          const per = [[], [], []], t = m.triples;
+          for (let i = 0; i < t.length; i += 3) per[t[i + 1]].push(t[i], t[i + 2]);
+          for (let c = 0; c < 3; c++) {
+            this.pairs[c] = Int32Array.from(per[c]);
+            if (per[c].length) this.want[c] = true;
+            if (c === 0 || this.usable(c)) this.cores[c].demand = this.pairs[c];
+          }
+          break;
+        }
+        case 'route': this.route = m.to; break;
+        case 'focus': {
+          this.focus = { g: m.g, c: m.c || 0 };
+          for (let c = 0; c < 3; c++) if (this.cores[c] && c !== this.focus.c) this.cores[c].focus = -1;
+          if (this.focus.c === 0 || this.usable(this.focus.c)) this.cores[this.focus.c].setFocus(m.g);
+          else { this.want[this.focus.c] = true; this.post({ type: 'anglesClear' }); } // shown once that class is built
+          break;
+        }
+      }
+    }
+    // 1) small-agent sectors never built yet, 2) one pending big-agent core, 3) round-robin over usable classes
+    // (each class builds its missing sectors before refreshing old ones).
+    work(budgetMs, maxJobs, minAgeMs) {
+      if (!this.ready) return 0;
+      const t0 = now(), cap = maxJobs || 1e9; let jobs = 0;
+      const core0 = this.cores[0];
+      while (jobs < cap && now() - t0 < budgetMs && core0.nextJob(1e12) >= 0) {
+        const tj = now(), n = core0.work(1e9, 1, 1e12); if (!n) break;
+        jobs += n; this.st.jobs += n; this.st.ms += now() - tj;
+      }
+      if (core0.nextJob(1e12) < 0) for (let c = 1; c < 3; c++) if (this.want[c] && !this.usable(c)) { this.build(c); return jobs + 1; }
+      let idle = 0;
+      while (jobs < (maxJobs || 1e9) && now() - t0 < budgetMs && idle < 3) {
+        idle = 0;
+        for (let c = 0; c < 3; c++) {
+          if (!this.usable(c)) { idle++; continue; }
+          const tj = now(), n = this.cores[c].work(1e9, 1, minAgeMs);
+          if (n) { jobs += n; this.st.jobs += n; this.st.ms += now() - tj; } else idle++;
+          if (jobs >= (maxJobs || 1e9)) break;
+        }
+      }
+      const t = now();
+      if (t - this.st.t0 > 500) {
+        const demand = this.cores.reduce((sum, c, i) => sum + (c && this.usable(i) ? c.demand.length / 2 : 0), 0);
+        this.post({ type: 'fieldStats', jobsPerSec: this.st.jobs / ((t - this.st.t0) / 1000), msPerJob: this.st.jobs ? this.st.ms / this.st.jobs : 0, demand, classes: [0, 1, 2].filter((c) => this.usable(c)).length });
+        this.st = { jobs: 0, ms: 0, t0: t };
+      }
+      return jobs;
+    }
+  }
+  return FieldHost;
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports.FieldHost = FieldHost;
+
+</script>
+<script id="src-sim">
+// Flow Field Lab 3: simulation worker core for agents of mixed sizes, with two interchangeable
+// neighbour searches. "grid": a hashed grid with one level per size tier. "bvh": a layered dynamic
+// BVH adapted from the provided multi-layer DBVH (per-layer cell grids, fat look-ahead AABBs,
+// promotion and demotion with hysteresis, SAH insertion). Movement rules are shared by both.
+var SimCore = (function () {
+  'use strict';
+  const FFx = (typeof FF !== 'undefined') ? FF : require('./shared.js');
+  const { W, H, N, SEC, NSX, NSEC, P, mulberry32, geometry, SIZES, CLASS_OF, MIX, clearance } = FFx;
+  const MAX_GROUPS = 256, NCLS = 3, RMAX = SIZES[SIZES.length - 1];
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const DECAY_TAB = new Float32Array(7681);
+  for (let i = 0; i < DECAY_TAB.length; i++) DECAY_TAB[i] = Math.exp(-P.decay * i / 480);
+  const decayFor = (dt) => { const k = Math.round(dt * 480); return k < 7681 ? DECAY_TAB[k] : Math.exp(-P.decay * dt); };
+  const REORDER_EVERY = 8;
+
+  // ----------------------------------------------------------------- hashed grid, one level per size tier
+  // Blocks of 8 x 8 bins are hashed and bins inside a block stay adjacent in memory.
+  const hashBin = (bx, by, mask) => (((Math.imul(bx >> 3, 73856093) ^ Math.imul(by >> 3, 19349663)) << 6) | ((by & 7) << 3) | (bx & 7)) & mask;
+  const LEVELS = [{ bin: 0.25, maxR: 0.1 }, { bin: 1, maxR: 0.5 }, { bin: 4, maxR: 2.0 }];
+  const levelOf = (r) => (r <= LEVELS[0].maxR ? 0 : r <= LEVELS[1].maxR ? 1 : 2);
+
+  // ----------------------------------------------------------------- layered BVH (from the provided DBVH)
+  const envPad = (typeof process !== 'undefined' && process.env && process.env.BV_PAD) ? +process.env.BV_PAD : 0;
+  const BV_PAD = envPad || 0.1, BV_LOOK = 3;      // jitter padding (tiles) and look-ahead (substeps)
+  const BV_CELL = [4, 16];                          // layer 0 and 1 cell sizes in tiles; layer 2 is one global tree
+  const BV_NC = [256, 64];
+  const BV_L0_PROMOTE = 0.5, BV_L0_DEMOTE = 0.45, BV_L1_PROMOTE = 1.3, BV_L1_DEMOTE = 1.2; // on max fat half-extent
+  const BV_MAXH = [BV_L0_PROMOTE, BV_L1_PROMOTE];
+  const pool = [];
+  const allocNode = () => (pool.length ? pool.pop() : { minX: 0, maxX: 0, minY: 0, maxY: 0, parent: null, left: null, right: null, ent: -1, height: 0 });
+  const freeNode = (n) => { n.parent = null; n.left = null; n.right = null; n.ent = -1; n.height = 0; pool.push(n); };
+  const isLeaf = (n) => n.ent >= 0;
+  const mergedPerim = (a, b) => 2 * ((Math.max(a.maxX, b.maxX) - Math.min(a.minX, b.minX)) + (Math.max(a.maxY, b.maxY) - Math.min(a.minY, b.minY)));
+  const perim = (a) => 2 * ((a.maxX - a.minX) + (a.maxY - a.minY));
+  function mergeInto(o, a, b) { o.minX = Math.min(a.minX, b.minX); o.maxX = Math.max(a.maxX, b.maxX); o.minY = Math.min(a.minY, b.minY); o.maxY = Math.max(a.maxY, b.maxY); }
+  const sahN = [], sahC = [], qStack = [];
+  class Tree {
+    constructor() { this.root = null; this.count = 0; }
+    // Branch-and-bound SAH insertion, as in the provided insertSAH.
+    insert(leaf) {
+      this.count++; leaf.parent = null;
+      if (!this.root) { this.root = leaf; return; }
+      let sp = 0; sahN[sp] = this.root; sahC[sp++] = 0;
+      let best = this.root, bc = Infinity; const lp = perim(leaf);
+      while (sp > 0) {
+        sp--; const n = sahN[sp], ic = sahC[sp];
+        const dc = mergedPerim(n, leaf), c = dc + ic;
+        if (c < bc) { bc = c; best = n; }
+        if (!isLeaf(n)) { const ni = ic + dc - perim(n); if (lp + ni < bc) { sahN[sp] = n.left; sahC[sp++] = ni; sahN[sp] = n.right; sahC[sp++] = ni; } }
+      }
+      const sib = best, op = sib.parent, br = allocNode();
+      mergeInto(br, leaf, sib); br.parent = op; br.left = leaf; br.right = sib; br.ent = -1; br.height = 1 + Math.max(leaf.height, sib.height);
+      leaf.parent = br; sib.parent = br;
+      if (op) { if (op.left === sib) op.left = br; else op.right = br; this.refit(op); } else this.root = br;
+    }
+    remove(leaf) {
+      this.count--;
+      if (leaf === this.root) { this.root = null; leaf.parent = null; return; }
+      const p = leaf.parent, sib = p.left === leaf ? p.right : p.left, gp = p.parent;
+      sib.parent = gp;
+      if (gp) { if (gp.left === p) gp.left = sib; else gp.right = sib; this.refit(gp); } else this.root = sib;
+      leaf.parent = null; freeNode(p);
+    }
+    refit(node) {
+      for (let n = node; n; n = n.parent) {
+        if (isLeaf(n)) continue;
+        mergeInto(n, n.left, n.right); n.height = 1 + Math.max(n.left.height, n.right.height);
+        const b = n.left.height - n.right.height;
+        if (b > 1) this.rot(n, n.left, n.right); else if (b < -1) this.rot(n, n.right, n.left);
+      }
+    }
+    rot(node, tall, short) {
+      if (isLeaf(tall)) return;
+      const tl = tall.left, tr = tall.right;
+      if (mergedPerim(tr, short) < mergedPerim(tl, short)) { tall.left = short; short.parent = tall; if (node.left === tall) node.right = tl; else node.left = tl; tl.parent = node; }
+      else { tall.right = short; short.parent = tall; if (node.left === tall) node.right = tr; else node.left = tr; tr.parent = node; }
+      mergeInto(tall, tall.left, tall.right); tall.height = 1 + Math.max(tall.left.height, tall.right.height);
+      mergeInto(node, node.left, node.right); node.height = 1 + Math.max(node.left.height, node.right.height);
+    }
+    clear() { // free branch nodes; leaves belong to agents
+      const st = this.root ? [this.root] : [];
+      while (st.length) { const n = st.pop(); if (!isLeaf(n)) { st.push(n.left, n.right); freeNode(n); } else n.parent = null; }
+      this.root = null; this.count = 0;
+    }
+  }
+
+  class SimCore {
+    constructor() {
+      this.wall = new Uint8Array(N); this.moveMask = new Uint8Array(N); this.nearWall = new Uint8Array(N); this.clear = new Float32Array(N);
+      this.rho = new Float32Array(N); this.jam = new Float32Array(N); this.F4 = new Float32Array(4 * N); this.lastT = new Float32Array(N);
+      this.stamp = new Int32Array(N).fill(-1); // tick of the last move near each tile: wakes sleeping agents
+      this.secActive = new Float32Array(NSEC).fill(-1e9); this.heatSent = new Set();
+      this.M = 0; this.cap = 0; this.grow(16384);
+      this.lv = LEVELS.map((d) => ({ bin: d.bin, inv: 1 / d.bin, maxR: d.maxR, T: 0, mask: 0, start: null, count: null, fill: null, agents: new Int32Array(16), n: 0 }));
+      this.bv = { l0: new Array(BV_NC[0] * BV_NC[0]).fill(null), l1: new Array(BV_NC[1] * BV_NC[1]).fill(null), l2: new Tree(), reinserts: 0 };
+      this.structure = 0; // 0 hashed grid, 1 layered BVH
+      this.rx = new Float64Array(512); this.ry = new Float64Array(512); this.rd = new Float64Array(512); this.rc = new Float64Array(512);
+      const K = P.dirs; this.COS = new Float64Array(K); this.SIN = new Float64Array(K);
+      for (let i = 0; i < K; i++) { this.COS[i] = Math.cos(2 * Math.PI * i / K); this.SIN[i] = Math.sin(2 * Math.PI * i / K); }
+      this.groups = new Array(MAX_GROUPS + 1).fill(null);
+      this.time = 0; this.tick = 0; this.wakeAll = 0; this.wakeEvery = 8; this.steps = 0; this.acc = 0; this.L = P.speed * P.dt;
+      this.speed = P.speed; this.paused = false; this.rng = mulberry32(1); this.seed = 1; this.lookBase = SIZES[0];
+      this.arrived = []; this.agentVersion = 1; this.sentVersion = 0; this.layoutVersion = 1; this.loading = false;
+      this.demandMark = new Uint8Array((MAX_GROUPS + 1) * NCLS * NSEC); this.demandEvery = 30;
+      this.scene = { name: 'mixed', count: 10000 };
+      this.st = { simMs: 0, upkeepMs: 0, moveMs: 0, checks: 0, visits: 0, arrBins: [], arrBin: 0, binEnd: 1 };
+      this.cnt = { checks: 0, visits: 0, queries: 0, upkeep: 0, moves: 0 };
+      this.post = () => {}; this.postPeer = () => {};
+      this.posBufs = [];
+      this.mode = 'cpu'; this.cullRect = null; // in 'gpu' mode the main thread steps agents; this worker keeps groups and scenes
+    }
+
+    // ------------------------------------------------------------- storage
+    grow(n) {
+      if (n <= this.cap) return;
+      const cap = Math.max(n, this.cap * 2), M = this.M;
+      const cp = (old, T) => { const a = new T(cap); if (old) a.set(old.subarray(0, M)); return a; };
+      this.ax = cp(this.ax, Float64Array); this.ay = cp(this.ay, Float64Array); this.aG = cp(this.aG, Uint16Array);
+      this.aS = cp(this.aS, Uint8Array); this.aR = cp(this.aR, Float32Array); this.aC = cp(this.aC, Uint8Array); this.aLv = cp(this.aLv, Uint8Array);
+      this.aVX = cp(this.aVX, Float32Array); this.aVY = cp(this.aVY, Float32Array);
+      this.aSide = cp(this.aSide, Int8Array); this.aStuck = cp(this.aStuck, Float32Array);
+      this.aSleep = cp(this.aSleep, Uint8Array); this.aTry = cp(this.aTry, Int32Array); this.aT0 = cp(this.aT0, Float32Array);
+      this.idOf = cp(this.idOf, Int32Array); this.slotOf = cp(this.slotOf, Int32Array);
+      this.bvLayer = cp(this.bvLayer, Uint8Array); this.bvCell = cp(this.bvCell, Int32Array);
+      const leaf = new Array(cap).fill(null); if (this.bvLeaf) for (let i = 0; i < M; i++) leaf[i] = this.bvLeaf[i]; this.bvLeaf = leaf;
+      this.aB = new Int32Array(cap);
+      this.tmpF64 = new Float64Array(cap); this.tmpF32 = new Float32Array(cap); this.tmpI32 = new Int32Array(cap); this.tmpU16 = new Uint16Array(cap); this.tmpI8 = new Int8Array(cap); this.tmpU8 = new Uint8Array(cap);
+      this.ord = new Int32Array(cap); this.keys = new Int32Array(cap);
+      this.cap = cap;
+    }
+    addAgent(x, y, g, s) {
+      if (this.M >= this.cap) this.grow(this.M + 1);
+      const a = this.M++, r = SIZES[s];
+      this.ax[a] = x; this.ay[a] = y; this.aG[a] = g; this.aS[a] = s; this.aR[a] = r; this.aC[a] = CLASS_OF[s]; this.aLv[a] = levelOf(r);
+      this.aVX[a] = 0; this.aVY[a] = 0; this.aSide[a] = (a & 1) ? 1 : -1; this.aStuck[a] = 0; this.aSleep[a] = 0; this.aTry[a] = 0; this.aT0[a] = this.time;
+      this.idOf[a] = a; this.slotOf[a] = a; this.bvLeaf[a] = null;
+      if (g && this.groups[g]) { this.groups[g].count++; this.groups[g].area += r * r; }
+      if (this.structure === 1 && !this.loading) this.bvInsert(a);
+      return a;
+    }
+    removeAgent(a) { // a is a slot; the highest external id takes over the removed agent's id
+      const g = this.aG[a]; if (g && this.groups[g]) { this.groups[g].count--; this.groups[g].area -= this.aR[a] * this.aR[a]; }
+      if (this.structure === 1 && this.bvLeaf[a]) this.bvTreeOf(a).remove(this.bvLeaf[a]);
+      const id = this.idOf[a], last = --this.M;
+      if (a !== last) {
+        this.ax[a] = this.ax[last]; this.ay[a] = this.ay[last]; this.aG[a] = this.aG[last]; this.aS[a] = this.aS[last]; this.aR[a] = this.aR[last]; this.aC[a] = this.aC[last]; this.aLv[a] = this.aLv[last];
+        this.aVX[a] = this.aVX[last]; this.aVY[a] = this.aVY[last]; this.aSide[a] = this.aSide[last];
+        this.aStuck[a] = this.aStuck[last]; this.aSleep[a] = this.aSleep[last]; this.aTry[a] = this.aTry[last]; this.aT0[a] = this.aT0[last];
+        this.bvLayer[a] = this.bvLayer[last]; this.bvCell[a] = this.bvCell[last];
+        const lf = this.bvLeaf[last]; this.bvLeaf[a] = lf; if (lf) lf.ent = a;
+        this.idOf[a] = this.idOf[last]; this.slotOf[this.idOf[a]] = a;
+      } else this.bvLeaf[a] = null;
+      this.bvLeaf[last] = null;
+      if (id !== last) { const s2 = this.slotOf[last]; this.idOf[s2] = id; this.slotOf[id] = s2; }
+    }
+    // Re-sort agent storage by 4 x 4-tile block so neighbours sit next to each other in memory.
+    // One loop per array keeps every typed-array access monomorphic.
+    reorder() {
+      const M = this.M, o = this.ord, key = this.keys, cnt = new Int32Array(65537);
+      for (let a = 0; a < M; a++) { const k = ((this.ay[a] | 0) >> 2) * 256 + ((this.ax[a] | 0) >> 2); key[a] = k; cnt[k + 1]++; }
+      for (let k = 0; k < 65536; k++) cnt[k + 1] += cnt[k];
+      for (let a = 0; a < M; a++) o[cnt[key[a]]++] = a;
+      const f64 = this.tmpF64, f32 = this.tmpF32, i32 = this.tmpI32, u16 = this.tmpU16, i8 = this.tmpI8, u8 = this.tmpU8;
+      const xs = this.ax; for (let j = 0; j < M; j++) f64[j] = xs[o[j]]; xs.set(f64.subarray(0, M));
+      const ys = this.ay; for (let j = 0; j < M; j++) f64[j] = ys[o[j]]; ys.set(f64.subarray(0, M));
+      const vx = this.aVX; for (let j = 0; j < M; j++) f32[j] = vx[o[j]]; vx.set(f32.subarray(0, M));
+      const vy = this.aVY; for (let j = 0; j < M; j++) f32[j] = vy[o[j]]; vy.set(f32.subarray(0, M));
+      const st = this.aStuck; for (let j = 0; j < M; j++) f32[j] = st[o[j]]; st.set(f32.subarray(0, M));
+      const t0 = this.aT0; for (let j = 0; j < M; j++) f32[j] = t0[o[j]]; t0.set(f32.subarray(0, M));
+      const rr = this.aR; for (let j = 0; j < M; j++) f32[j] = rr[o[j]]; rr.set(f32.subarray(0, M));
+      const tr = this.aTry; for (let j = 0; j < M; j++) i32[j] = tr[o[j]]; tr.set(i32.subarray(0, M));
+      const id = this.idOf; for (let j = 0; j < M; j++) i32[j] = id[o[j]]; id.set(i32.subarray(0, M));
+      const bc = this.bvCell; for (let j = 0; j < M; j++) i32[j] = bc[o[j]]; bc.set(i32.subarray(0, M));
+      const g = this.aG; for (let j = 0; j < M; j++) u16[j] = g[o[j]]; g.set(u16.subarray(0, M));
+      const sd = this.aSide; for (let j = 0; j < M; j++) i8[j] = sd[o[j]]; sd.set(i8.subarray(0, M));
+      const sl = this.aSleep; for (let j = 0; j < M; j++) u8[j] = sl[o[j]]; sl.set(u8.subarray(0, M));
+      const sz = this.aS; for (let j = 0; j < M; j++) u8[j] = sz[o[j]]; sz.set(u8.subarray(0, M));
+      const cl = this.aC; for (let j = 0; j < M; j++) u8[j] = cl[o[j]]; cl.set(u8.subarray(0, M));
+      const lv = this.aLv; for (let j = 0; j < M; j++) u8[j] = lv[o[j]]; lv.set(u8.subarray(0, M));
+      const bl = this.bvLayer; for (let j = 0; j < M; j++) u8[j] = bl[o[j]]; bl.set(u8.subarray(0, M));
+      const lf = this.bvLeaf, tmp = new Array(M); for (let j = 0; j < M; j++) tmp[j] = lf[o[j]];
+      for (let j = 0; j < M; j++) { lf[j] = tmp[j]; if (tmp[j]) tmp[j].ent = j; }
+      const so = this.slotOf; for (let j = 0; j < M; j++) so[id[j]] = j;
+    }
+
+    // ------------------------------------------------------------- messages
+    handle(m) {
+      switch (m.type) {
+        case 'scene': this.loadScene(m.name, m.count); if (this.mode === 'gpu') this.postState({ resetCong: true }); break;
+        case 'tick': if (m.buf) this.posBufs.push(m.buf); if (this.mode !== 'gpu') this.frame(m.dt); break;
+        case 'export': this.mode = 'gpu'; this.postState({ full: true }); break;
+        case 'import': this.importState(m.state); this.mode = m.mode || 'cpu'; break;
+        case 'cull': this.cull(); this.postState({}); break;
+        case 'order': this.orderGroup(m.idx, m.cx, m.cy); break;
+        case 'edits': this.applyEdits(m.tiles, m.values); break;
+        case 'speed': this.speed = m.v; break;
+        case 'pause': this.paused = m.v; break;
+        case 'spawn': this.spawnIdle(m.cx, m.cy, m.size); if (this.mode === 'gpu') this.postState({}); break;
+        case 'structure': this.setStructure(m.v === 'bvh' ? 1 : 0); break;
+        case 'slot': { const g = this.groups[m.g]; if (g && g.slots) g.slots[m.c || 0][m.s] = { fx: m.fx, fy: m.fy }; break; }
+      }
+    }
+    setStructure(v) {
+      if (v === this.structure) return;
+      const t0 = now();
+      if (v === 1) { this.structure = 1; this.bvBuild(); } else { this.bvClearAll(); this.structure = 0; this.rebuildGrid(); }
+      this.wakeAll = this.tick;
+      this.post({ type: 'notice', text: v === 1 ? `Layered BVH built in ${(now() - t0).toFixed(0)} ms.` : 'Hashed grid active.' });
+    }
+
+    // ------------------------------------------------------------- groups
+    newGroupId() { for (let i = 1; i <= MAX_GROUPS; i++) if (!this.groups[i]) return i; return 0; }
+    makeGroup(id, cx, cy, r, opts) {
+      const g = { id, cx, cy, r, count: 0, area: 0, respawn: !!(opts && opts.respawn), spawn: (opts && opts.spawn) || null, slots: [new Array(NSEC).fill(null), new Array(NSEC).fill(null), new Array(NSEC).fill(null)], arrivals: 0 };
+      this.groups[id] = g;
+      return g;
+    }
+    groupList() {
+      const list = [];
+      for (let i = 1; i <= MAX_GROUPS; i++) { const g = this.groups[i]; if (g) list.push({ id: i, cx: g.cx, cy: g.cy, r: g.r, count: g.count, respawn: g.respawn, spawn: g.spawn }); }
+      return list;
+    }
+    publishGroups() {
+      const list = this.groupList();
+      this.postPeer({ type: 'groups', list: list.map((g) => ({ id: g.id, cx: g.cx, cy: g.cy, r: g.r })) });
+      this.post({ type: 'groups', list });
+    }
+    // Target disc sized so the group's total footprint fills half of it.
+    targetRadius(area) { return Math.max(1.5, Math.sqrt(Math.max(area, 0.01) / 0.5)); }
+    snapOpen(cx, cy) {
+      const x0 = Math.min(W - 1, Math.max(0, Math.floor(cx))), y0 = Math.min(H - 1, Math.max(0, Math.floor(cy)));
+      if (!this.wall[y0 * W + x0]) return [cx, cy];
+      for (let r = 1; r < 64; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = x0 + dx, y = y0 + dy;
+        if (x >= 0 && y >= 0 && x < W && y < H && !this.wall[y * W + x]) return [x + 0.5, y + 0.5];
+      }
+      return [cx, cy];
+    }
+    orderGroup(idx, cx, cy) {
+      [cx, cy] = this.snapOpen(cx, cy);
+      let gid = 0;
+      for (let i = 1; i <= MAX_GROUPS; i++) { const g = this.groups[i]; if (g && !g.respawn && (g.cx - cx) ** 2 + (g.cy - cy) ** 2 < 4) { gid = i; break; } }
+      if (!gid) {
+        gid = this.newGroupId();
+        if (!gid) { this.post({ type: 'notice', text: 'Order refused: 256 groups are already active.' }); return; }
+        this.makeGroup(gid, cx, cy, 1.5);
+      }
+      const g = this.groups[gid];
+      for (let i = 0; i < idx.length; i++) {
+        const id = idx[i]; if (id < 0 || id >= this.M) continue;
+        const a = this.slotOf[id], old = this.aG[a];
+        if (old === gid) continue;
+        const r2 = this.aR[a] * this.aR[a];
+        if (old && this.groups[old]) { this.groups[old].count--; this.groups[old].area -= r2; }
+        this.aG[a] = gid; g.count++; g.area += r2; this.aSleep[a] = 0; this.aStuck[a] = 0; this.aT0[a] = this.time;
+      }
+      for (let i = 1; i <= MAX_GROUPS; i++) { const o = this.groups[i]; if (o && o.count <= 0 && i !== gid) this.groups[i] = null; }
+      g.r = this.targetRadius(g.area);
+      this.wakeAll = this.tick; this.agentVersion++;
+      this.publishGroups();
+      if (this.mode === 'gpu') { const gids = this.gidsById(); this.sentVersion = this.agentVersion; this.post({ type: 'gids', gids, agentVersion: this.agentVersion, layoutVersion: this.layoutVersion }, [gids.buffer]); }
+      else this.sendDemand();
+      this.post({ type: 'ordered', g: gid });
+    }
+
+    // ------------------------------------------------------------- walls
+    setWallsAll(walls) {
+      this.wall.set(walls);
+      geometry(this.wall, this.moveMask, this.nearWall, 0, 0, W - 1, H - 1);
+      clearance(this.wall, this.clear, 0, 0, W - 1, H - 1, 3);
+      this.rho.fill(0); this.jam.fill(0); this.F4.fill(0); this.lastT.fill(0); this.secActive.fill(-1e9); this.stamp.fill(-1);
+    }
+    applyEdits(tiles, values) {
+      let x0 = W, y0 = H, x1 = -1, y1 = -1;
+      for (let i = 0; i < tiles.length; i++) {
+        const t = tiles[i]; this.wall[t] = values[i];
+        const x = t % W, y = (t / W) | 0;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+      if (x1 < 0) return;
+      geometry(this.wall, this.moveMask, this.nearWall, x0 - 1, y0 - 1, x1 + 1, y1 + 1);
+      clearance(this.wall, this.clear, x0 - 3, y0 - 3, x1 + 3, y1 + 3, 3);
+      if (this.mode === 'gpu') { // positions live on the GPU: agents caught in new walls go at the next cull
+        const c = this.cullRect; this.cullRect = c ? [Math.min(c[0], x0), Math.min(c[1], y0), Math.max(c[2], x1), Math.max(c[3], y1)] : [x0, y0, x1, y1];
+        this.wakeAll = this.tick; return;
+      }
+      for (let a = this.M - 1; a >= 0; a--) {
+        const x = this.ax[a], y = this.ay[a], r = this.aR[a];
+        if (x < x0 - 1 - r || x > x1 + 2 + r || y < y0 - 1 - r || y > y1 + 2 + r) continue;
+        if (!this.freeOfWalls(x, y, r)) { this.removeAgent(a); this.layoutVersion++; }
+      }
+      this.wakeAll = this.tick; this.agentVersion++;
+    }
+    freeOfWalls(px, py, r) {
+      if (px - r < 0 || py - r < 0 || px + r > W || py + r > H) return false;
+      for (let cy = Math.floor(py - r); cy <= Math.floor(py + r); cy++) for (let cx = Math.floor(px - r); cx <= Math.floor(px + r); cx++) {
+        if (!this.wall[cy * W + cx]) continue;
+        const qx = Math.min(Math.max(px, cx), cx + 1), qy = Math.min(Math.max(py, cy), cy + 1), dx = px - qx, dy = py - qy;
+        if (dx * dx + dy * dy < r * r) return false;
+      }
+      return true;
+    }
+
+    // ------------------------------------------------------------- hashed grid
+    rebuildGrid() {
+      const M = this.M, lv = this.lv;
+      for (const l of lv) l.n = 0;
+      for (let a = 0; a < M; a++) lv[this.aLv[a]].n++;
+      for (const l of lv) {
+        const want = Math.max(4096, 1 << Math.ceil(Math.log2(Math.max(1, l.n) * 4)));
+        if (want !== l.T) { l.T = want; l.mask = want - 1; l.start = new Int32Array(want + 1); l.count = new Int32Array(want); l.fill = new Int32Array(want); }
+        if (l.agents.length < l.n) l.agents = new Int32Array(Math.max(l.n, l.agents.length * 2));
+        l.count.fill(0);
+      }
+      for (let a = 0; a < M; a++) {
+        const l = lv[this.aLv[a]];
+        const b = hashBin(Math.floor(this.ax[a] * l.inv), Math.floor(this.ay[a] * l.inv), l.mask);
+        this.aB[a] = b; l.count[b]++;
+      }
+      for (const l of lv) {
+        const st = l.start, cnt = l.count; let s = 0;
+        for (let b = 0; b < l.T; b++) { st[b] = s; s += cnt[b]; }
+        st[l.T] = s; l.fill.set(st.subarray(0, l.T));
+      }
+      for (let a = 0; a < M; a++) { const l = lv[this.aLv[a]]; l.agents[l.fill[this.aB[a]]++] = a; }
+    }
+    // Everything a move of length L by agent a could touch, from every grid level, into rx/ry/rd/rc.
+    gatherGrid(a, x, y, ra, L, dx, dy, g) {
+      let n = 0, checks = 0;
+      const capN = this.rx.length, ax = this.ax, ay = this.ay, aR = this.aR;
+      for (let k = 0; k < 3; k++) {
+        const l = this.lv[k]; if (!l.n) continue;
+        const s = ra + l.maxR + 2 * L, inv = l.inv, mask = l.mask, st = l.start, ag = l.agents;
+        const bx0 = Math.floor((x - s) * inv), bx1 = Math.floor((x + s) * inv), by0 = Math.floor((y - s) * inv), by1 = Math.floor((y + s) * inv);
+        for (let by = by0; by <= by1; by++) {
+          const hy = Math.imul(by >> 3, 19349663), ly = (by & 7) << 3;
+          for (let bx = bx0; bx <= bx1; bx++) {
+            const bb = (((Math.imul(bx >> 3, 73856093) ^ hy) << 6) | ly | (bx & 7)) & mask;
+            for (let j = st[bb], e = st[bb + 1]; j < e; j++) {
+              const b = ag[j]; if (b === a) continue;
+              checks++;
+              const ex = ax[b] - x, ey = ay[b] - y, d2 = ex * ex + ey * ey, rr = ra + aR[b], lim = rr + L;
+              if (d2 >= lim * lim || n >= capN) continue;
+              n = this.addCand(n, b, ex, ey, d2, rr, dx, dy, g);
+            }
+          }
+        }
+      }
+      this.cnt.checks += checks;
+      return n;
+    }
+    addCand(n, b, ex, ey, d2, rr, dx, dy, g) { // opposing traffic may squeeze past
+      let cc = rr * rr;
+      const gb = this.groups[this.aG[b]];
+      if (gb && gb !== g && this.vecAt(gb, this.aC[b], this.ax[b] | 0, this.ay[b] | 0) && this.vx * dx + this.vy * dy < P.passDot) cc *= P.passScale * P.passScale;
+      this.rx[n] = ex; this.ry[n] = ey; this.rd[n] = d2; this.rc[n] = cc;
+      return n + 1;
+    }
+
+    // ------------------------------------------------------------- layered BVH
+    bvMaxHalf(a, L) { return this.aR[a] + BV_PAD + Math.max(Math.abs(this.aVX[a]), Math.abs(this.aVY[a])) * L * BV_LOOK; }
+    bvFreshLayer(mh) { return mh > BV_L1_PROMOTE ? 2 : mh > BV_L0_PROMOTE ? 1 : 0; }
+    bvTargetLayer(cur, mh) { // hysteresis, as in the provided computeTargetLayer
+      if (cur === 0) return mh > BV_L0_PROMOTE ? (mh > BV_L1_PROMOTE ? 2 : 1) : 0;
+      if (cur === 1) { if (mh < BV_L0_DEMOTE) return 0; if (mh > BV_L1_PROMOTE) return 2; return 1; }
+      return mh < BV_L1_DEMOTE ? (mh < BV_L0_DEMOTE ? 0 : 1) : 2;
+    }
+    bvCellIndex(layer, x, y) { const cs = BV_CELL[layer], nc = BV_NC[layer]; return Math.min(nc - 1, Math.max(0, (y / cs) | 0)) * nc + Math.min(nc - 1, Math.max(0, (x / cs) | 0)); }
+    bvTree(layer, cell) {
+      if (layer === 2) return this.bv.l2;
+      const arr = layer === 0 ? this.bv.l0 : this.bv.l1;
+      return arr[cell] || (arr[cell] = new Tree());
+    }
+    bvTreeOf(a) { return this.bvTree(this.bvLayer[a], this.bvCell[a]); }
+    bvFat(n, a, L) { // fat AABB: radius + jitter padding, stretched along the velocity by the look-ahead
+      const x = this.ax[a], y = this.ay[a], h = this.aR[a] + BV_PAD;
+      n.minX = x - h; n.maxX = x + h; n.minY = y - h; n.maxY = y + h;
+      const px = this.aVX[a] * L * BV_LOOK, py = this.aVY[a] * L * BV_LOOK;
+      if (px < 0) n.minX += px; else n.maxX += px;
+      if (py < 0) n.minY += py; else n.maxY += py;
+    }
+    bvInsert(a) {
+      const L = this.L, n = this.bvLeaf[a] || allocNode();
+      n.ent = a; n.height = 0; n.left = null; n.right = null; this.bvLeaf[a] = n;
+      const layer = this.bvFreshLayer(this.bvMaxHalf(a, L));
+      this.bvLayer[a] = layer; this.bvCell[a] = layer < 2 ? this.bvCellIndex(layer, this.ax[a], this.ay[a]) : 0;
+      this.bvFat(n, a, L);
+      this.bvTree(layer, this.bvCell[a]).insert(n);
+    }
+    bvClearAll() {
+      for (const arr of [this.bv.l0, this.bv.l1]) for (let i = 0; i < arr.length; i++) if (arr[i]) { arr[i].clear(); arr[i] = null; }
+      this.bv.l2.clear();
+      for (let a = 0; a < this.M; a++) this.bvLeaf[a] = null;
+    }
+    bvBuild() { this.bvClearAll(); for (let a = 0; a < this.M; a++) this.bvInsert(a); }
+    // Per substep: reinsert only agents that left their fat box, changed cell or changed layer.
+    bvUpdate(L) {
+      let re = 0;
+      for (let a = 0; a < this.M; a++) {
+        const n = this.bvLeaf[a], x = this.ax[a], y = this.ay[a], r = this.aR[a];
+        const cur = this.bvLayer[a], layer = this.bvTargetLayer(cur, this.bvMaxHalf(a, L));
+        const cell = layer < 2 ? this.bvCellIndex(layer, x, y) : 0;
+        if (layer === cur && cell === this.bvCell[a] && x - r >= n.minX && x + r <= n.maxX && y - r >= n.minY && y + r <= n.maxY) continue;
+        this.bvTree(cur, this.bvCell[a]).remove(n);
+        this.bvLayer[a] = layer; this.bvCell[a] = cell;
+        this.bvFat(n, a, L); this.bvTree(layer, cell).insert(n); re++;
+      }
+      this.bv.reinserts += re;
+    }
+    // Query every layer: cells within the query box widened by that layer's largest fat half-extent
+    // (this stands in for the provided per-cell safe bounds, which need a pass over all cells per update).
+    gatherBVH(a, x, y, ra, L, dx, dy, g) {
+      const q = ra + 2 * L, qx0 = x - q, qx1 = x + q, qy0 = y - q, qy1 = y + q;
+      let n = 0, checks = 0, visits = 0;
+      const capN = this.rx.length, ax = this.ax, ay = this.ay, aR = this.aR, st = qStack;
+      for (let layer = 0; layer < 3; layer++) {
+        let c0x = 0, c1x = 0, c0y = 0, c1y = 0, nc = 1, arr = null;
+        if (layer < 2) {
+          const cs = BV_CELL[layer], m = BV_MAXH[layer]; nc = BV_NC[layer]; arr = layer === 0 ? this.bv.l0 : this.bv.l1;
+          c0x = Math.max(0, Math.floor((qx0 - m) / cs)); c1x = Math.min(nc - 1, Math.floor((qx1 + m) / cs));
+          c0y = Math.max(0, Math.floor((qy0 - m) / cs)); c1y = Math.min(nc - 1, Math.floor((qy1 + m) / cs));
+        }
+        for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
+          const tree = layer < 2 ? arr[cy * nc + cx] : this.bv.l2;
+          if (!tree || !tree.root) continue;
+          let sp = 0; st[sp++] = tree.root;
+          while (sp > 0) {
+            const nd = st[--sp]; visits++;
+            if (nd.minX > qx1 || nd.maxX < qx0 || nd.minY > qy1 || nd.maxY < qy0) continue;
+            if (nd.ent < 0) { st[sp++] = nd.left; st[sp++] = nd.right; continue; }
+            const b = nd.ent; if (b === a) continue;
+            checks++;
+            const ex = ax[b] - x, ey = ay[b] - y, d2 = ex * ex + ey * ey, rr = ra + aR[b], lim = rr + L;
+            if (d2 >= lim * lim || n >= capN) continue;
+            n = this.addCand(n, b, ex, ey, d2, rr, dx, dy, g);
+          }
+        }
+      }
+      this.cnt.checks += checks; this.cnt.visits += visits;
+      return n;
+    }
+    // Agents whose centres may lie within s (+ their radius) of (x, y), from the active structure.
+    forNear(x, y, s, fn) {
+      if (this.structure === 1) {
+        const st = [];
+        for (let layer = 0; layer < 3; layer++) {
+          const trees = [];
+          if (layer < 2) {
+            const cs = BV_CELL[layer], m = BV_MAXH[layer], nc = BV_NC[layer], arr = layer === 0 ? this.bv.l0 : this.bv.l1;
+            for (let cy = Math.max(0, Math.floor((y - s - m) / cs)); cy <= Math.min(nc - 1, Math.floor((y + s + m) / cs)); cy++)
+              for (let cx = Math.max(0, Math.floor((x - s - m) / cs)); cx <= Math.min(nc - 1, Math.floor((x + s + m) / cs)); cx++) if (arr[cy * nc + cx]) trees.push(arr[cy * nc + cx]);
+          } else trees.push(this.bv.l2);
+          for (const t of trees) {
+            if (!t.root) continue; st.length = 0; st.push(t.root);
+            while (st.length) { const nd = st.pop(); if (nd.minX > x + s || nd.maxX < x - s || nd.minY > y + s || nd.maxY < y - s) continue; if (nd.ent < 0) st.push(nd.left, nd.right); else fn(nd.ent); }
+          }
+        }
+        return;
+      }
+      for (let k = 0; k < 3; k++) {
+        const l = this.lv[k]; if (!l.n || !l.start) continue;
+        const r = s + l.maxR;
+        for (let by = Math.floor((y - r) * l.inv); by <= Math.floor((y + r) * l.inv); by++) for (let bx = Math.floor((x - r) * l.inv); bx <= Math.floor((x + r) * l.inv); bx++) {
+          const bb = hashBin(bx, by, l.mask);
+          for (let j = l.start[bb], e = l.start[bb + 1]; j < e; j++) fn(l.agents[j]);
+        }
+      }
+    }
+
+    // ------------------------------------------------------------- congestion (lazy decay), weighted by footprint
+    touch(c) {
+      const t = this.time, lt = this.lastT[c];
+      if (lt !== t) {
+        const f = decayFor(t - lt);
+        this.rho[c] *= f; this.jam[c] *= f; const b = 4 * c; this.F4[b] *= f; this.F4[b + 1] *= f; this.F4[b + 2] *= f; this.F4[b + 3] *= f;
+        this.lastT[c] = t;
+      }
+    }
+    addCong(c, w, vx, vy) {
+      this.touch(c); this.rho[c] += w;
+      if (vx === 0 && vy === 0) { this.jam[c] += w; return; }
+      const b = 4 * c, F = this.F4;
+      if (vx > 0) F[b] += w * vx; else F[b + 1] -= w * vx;
+      if (vy > 0) F[b + 2] += w * vy; else F[b + 3] -= w * vy;
+    }
+    congestion(dt) {
+      const gdt = P.gain * dt, M = this.M, r0 = SIZES[0];
+      for (let a = 0; a < M; a++) {
+        const x = this.ax[a], y = this.ay[a], r = this.aR[a], cx = x | 0, cy = y | 0, vx = this.aVX[a], vy = this.aVY[a];
+        const w = gdt * (r / r0) * (r / r0); // a big agent counts as the small agents it displaces
+        this.secActive[(cy >> 5) * NSX + (cx >> 5)] = this.time;
+        if (r <= 0.35) { this.addCong(cy * W + cx, w, vx, vy); continue; }
+        let k = 0; // spread over the tiles whose centres it covers
+        const ty0 = Math.max(0, Math.floor(y - r)), ty1 = Math.min(H - 1, Math.floor(y + r)), tx0 = Math.max(0, Math.floor(x - r)), tx1 = Math.min(W - 1, Math.floor(x + r));
+        for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) if ((tx + 0.5 - x) ** 2 + (ty + 0.5 - y) ** 2 <= r * r) k++;
+        if (!k) { this.addCong(cy * W + cx, w, vx, vy); continue; }
+        for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+          if ((tx + 0.5 - x) ** 2 + (ty + 0.5 - y) ** 2 <= r * r) { this.addCong(ty * W + tx, w / k, vx, vy); this.secActive[(ty >> 5) * NSX + (tx >> 5)] = this.time; }
+        }
+      }
+    }
+    oncoming(c, dx, dy) {
+      const b = 4 * c, F = this.F4, f = decayFor(this.time - this.lastT[c]);
+      return f * ((dx > 0 ? dx * F[b + 1] : -dx * F[b]) + (dy > 0 ? dy * F[b + 3] : -dy * F[b + 2]));
+    }
+
+    // ------------------------------------------------------------- field sampling, per size class
+    vecAt(g, cls, cx, cy) {
+      const slot = g.slots[cls][(cy >> 5) * NSX + (cx >> 5)];
+      if (!slot) return false;
+      const li = ((cy & 31) << 5) | (cx & 31), vx = slot.fx[li], vy = slot.fy[li];
+      if (vx === 0 && vy === 0) return false;
+      this.vx = vx; this.vy = vy; return true;
+    }
+    sample(g, cls, x, y) {
+      const u = x - 0.5, v = y - 0.5, x0 = Math.floor(u), y0 = Math.floor(v), fx = u - x0, fy = v - y0;
+      let sx = 0, sy = 0, ws = 0;
+      for (let k = 0; k < 4; k++) {
+        const cx = x0 + (k & 1), cy = y0 + (k >> 1);
+        if (cx < 0 || cy < 0 || cx >= W || cy >= H) continue;
+        if (!this.vecAt(g, cls, cx, cy)) continue;
+        const w = ((k & 1) ? fx : 1 - fx) * ((k >> 1) ? fy : 1 - fy);
+        sx += w * this.vx; sy += w * this.vy; ws += w;
+      }
+      let l = Math.sqrt(sx * sx + sy * sy);
+      if (ws <= 0 || l < 1e-3) {
+        if (!this.vecAt(g, cls, x | 0, y | 0)) return false;
+        sx = this.vx; sy = this.vy; l = Math.sqrt(sx * sx + sy * sy);
+      }
+      this.sx = sx / l; this.sy = sy / l; return true;
+    }
+
+    // ------------------------------------------------------------- movement
+    tryMove(x, y, mx, my, n, r, wallFree) {
+      if (!wallFree && !this.freeOfWalls(x + mx, y + my, r)) return false;
+      const rx = this.rx, ry = this.ry, rd = this.rd, rc = this.rc;
+      for (let j = 0; j < n; j++) {
+        const dx = rx[j] - mx, dy = ry[j] - my, dN = dx * dx + dy * dy, rr = rc[j];
+        if (dN < rr && (rd[j] >= rr || dN < rd[j])) return false; // a new overlap, or a deeper one
+      }
+      return true;
+    }
+    stampAround(x, y, r) { // wake sleepers whose reach covers this spot
+      const m = r + 0.35 + 3 * this.L, st = this.stamp, t = this.tick;
+      const x0 = Math.max(0, Math.floor(x - m)), x1 = Math.min(W - 1, Math.floor(x + m)), y0 = Math.max(0, Math.floor(y - m)), y1 = Math.min(H - 1, Math.floor(y + m));
+      for (let yy = y0; yy <= y1; yy++) { const o = yy * W; for (let xx = x0; xx <= x1; xx++) st[o + xx] = t; }
+    }
+    commit(a, px, py, L) {
+      this.aVX[a] = (px - this.ax[a]) / L; this.aVY[a] = (py - this.ay[a]) / L;
+      this.ax[a] = px; this.ay[a] = py; this.aStuck[a] = 0; this.aSleep[a] = 0; this.moved++;
+      this.stampAround(px, py, this.aR[a]);
+    }
+    moveAgent(a, L, dt) {
+      this.aVX[a] = 0; this.aVY[a] = 0;
+      const gid = this.aG[a]; if (gid === 0) return;
+      const g = this.groups[gid]; if (!g) return;
+      const ra = this.aR[a], cls = this.aC[a], x = this.ax[a], y = this.ay[a], cx = x | 0, cy = y | 0, c = cy * W + cx;
+      if (this.aSleep[a]) { // nothing nearby has moved since it last failed: skip
+        const since = this.aTry[a];
+        let wake = this.tick - since >= this.wakeEvery || this.wakeAll > since || this.aStuck[a] + dt > P.escapeAfter;
+        if (!wake) {
+          if (ra <= 0.35) wake = this.stamp[c] >= since;
+          else {
+            const e = ra - 0.35;
+            for (let yy = Math.max(0, Math.floor(y - e)); yy <= Math.min(H - 1, Math.floor(y + e)) && !wake; yy++)
+              for (let xx = Math.max(0, Math.floor(x - e)); xx <= Math.min(W - 1, Math.floor(x + e)); xx++) if (this.stamp[yy * W + xx] >= since) { wake = true; break; }
+          }
+        }
+        if (!wake) { this.aStuck[a] += dt; return; }
+      }
+      let dx, dy;
+      const tdx = g.cx - x, tdy = g.cy - y, td2 = tdx * tdx + tdy * tdy;
+      if (td2 <= g.r * g.r) { // inside the target disc
+        if (g.respawn) { this.arrived.push(a); return; }
+        const l = Math.sqrt(td2); if (l < L) return;
+        dx = tdx / l; dy = tdy / l;
+      } else if (this.sample(g, cls, x, y) || (cls > 0 && this.sample(g, 0, x, y))) {
+        dx = this.sx; dy = this.sy;
+        const look = P.lookAhead + 2 * (ra - this.lookBase); // bigger agents read oncoming traffic early enough to sidestep it
+        const qx = Math.floor(x + dx * look), qy = Math.floor(y + dy * look);
+        if (qx >= 0 && qy >= 0 && qx < W && qy < H) {
+          const k2 = Math.min(1, this.oncoming(qy * W + qx, dx, dy) / P.oncRef) * P.anticipate;
+          if (k2 > 0) { const nx = dx - k2 * dy, ny = dy + k2 * dx, l = Math.sqrt(nx * nx + ny * ny); dx = nx / l; dy = ny / l; }
+        }
+      } else { const l = Math.sqrt(td2); dx = tdx / l; dy = tdy / l; }
+      this.aTry[a] = this.tick;
+      this.cnt.queries++;
+      const n = this.structure === 1 ? this.gatherBVH(a, x, y, ra, L, dx, dy, g) : this.gatherGrid(a, x, y, ra, L, dx, dy, g);
+      const wallFree = this.clear[c] >= ra + L + 0.71;
+      let mx = L * dx, my = L * dy;
+      if (this.tryMove(x, y, mx, my, n, ra, wallFree)) { this.commit(a, x + mx, y + my, L); return; }
+      const K = P.dirs, KM = K - 1;
+      const base = Math.round(Math.atan2(dy, dx) / (2 * Math.PI / K)) & KM, side = this.aSide[a];
+      for (let s = 1; s <= P.maxTurnSteps; s++) for (let q = 0; q < 2; q++) {
+        const idx = (base + (q === 0 ? side : -side) * s) & KM;
+        mx = L * this.COS[idx]; my = L * this.SIN[idx];
+        if (this.tryMove(x, y, mx, my, n, ra, wallFree)) { this.commit(a, x + mx, y + my, L); return; }
+      }
+      this.aStuck[a] += dt;
+      if (this.aStuck[a] > P.escapeAfter) { // one random escape attempt per window, then flip side
+        for (let t = 0; t < P.escapeTries; t++) {
+          const idx = (this.rng() * K) | 0; mx = L * this.COS[idx]; my = L * this.SIN[idx];
+          if (this.tryMove(x, y, mx, my, n, ra, wallFree)) { this.commit(a, x + mx, y + my, L); this.aSide[a] = -this.aSide[a]; return; }
+        }
+        this.aStuck[a] = 0; this.aSide[a] = -this.aSide[a];
+      }
+      this.aSleep[a] = 1;
+    }
+
+    // ------------------------------------------------------------- respawn
+    randomIn(sp) { const t = 2 * Math.PI * this.rng(), rr = sp.r * Math.sqrt(this.rng()); this.px = sp.cx + rr * Math.cos(t); this.py = sp.cy + rr * Math.sin(t); }
+    freeOfAgents(x, y, r, self) {
+      let free = true;
+      this.forNear(x, y, r + RMAX, (b) => { if (!free || b === self) return; const dx = this.ax[b] - x, dy = this.ay[b] - y, rr = r + this.aR[b]; if (dx * dx + dy * dy < rr * rr) free = false; });
+      return free;
+    }
+    respawnArrived() {
+      for (const a of this.arrived) {
+        const g = this.groups[this.aG[a]], r = this.aR[a];
+        g.arrivals++; this.st.arrBin++;
+        let lx = -1, ly = -1;
+        for (let t = 0; t < 40; t++) {
+          this.randomIn(g.spawn); const x = this.px, y = this.py;
+          if (x < 0 || y < 0 || x >= W || y >= H || !this.freeOfWalls(x, y, r)) continue;
+          lx = x; ly = y;
+          if (this.freeOfAgents(x, y, r, a)) break;
+        }
+        if (lx >= 0) { this.ax[a] = lx; this.ay[a] = ly; }
+        this.aT0[a] = this.time; this.aSleep[a] = 0; this.aStuck[a] = 0; this.aVX[a] = 0; this.aVY[a] = 0;
+        this.stampAround(this.ax[a], this.ay[a], r);
+        if (this.structure === 1) { this.bvTreeOf(a).remove(this.bvLeaf[a]); this.bvInsert(a); }
+      }
+      this.arrived.length = 0;
+    }
+
+    // ------------------------------------------------------------- stepping
+    step() {
+      const L0 = this.speed * P.dt, sub = Math.max(1, Math.ceil(L0 / (SIZES[0] / 4) - 1e-9)), dts = P.dt / sub, L = L0 / sub;
+      this.L = L;
+      for (let s = 0; s < sub; s++) {
+        if (this.tick % REORDER_EVERY === 0) this.reorder();
+        let t0 = now();
+        if (this.structure === 1) this.bvUpdate(L); else this.rebuildGrid();
+        this.cnt.upkeep += now() - t0;
+        this.congestion(dts);
+        this.tick++; this.moved = 0;
+        t0 = now();
+        for (let a = 0; a < this.M; a++) this.moveAgent(a, L, dts);
+        this.cnt.moves += now() - t0;
+        if (this.arrived.length) this.respawnArrived();
+        this.time += dts;
+      }
+      this.steps++;
+      if (this.steps % this.demandEvery === 0) this.sendDemand();
+      if (this.steps % 24 === 0) this.sendHeat();
+      if (this.time >= this.st.binEnd) { this.st.arrBins.push(this.st.arrBin); if (this.st.arrBins.length > 30) this.st.arrBins.shift(); this.st.arrBin = 0; this.st.binEnd = Math.floor(this.time) + 1; }
+    }
+    frame(dt) {
+      const t0 = now();
+      let steps = 0;
+      this.cnt.checks = 0; this.cnt.visits = 0; this.cnt.queries = 0; this.cnt.upkeep = 0; this.cnt.moves = 0;
+      if (!this.paused) {
+        this.acc += Math.min(0.1, dt || 0);
+        while (this.acc >= P.dt && steps < 8) {
+          this.step(); this.acc -= P.dt; steps++;
+          if (now() - t0 > 30) { this.acc = 0; break; } // cannot keep up: slow down instead of spiralling
+        }
+      }
+      const ms = now() - t0, k = 0.1;
+      this.st.simMs += (ms - this.st.simMs) * k;
+      if (steps) {
+        this.st.upkeepMs += (this.cnt.upkeep - this.st.upkeepMs) * k; this.st.moveMs += (this.cnt.moves - this.st.moveMs) * k;
+        const q = Math.max(1, this.cnt.queries);
+        this.st.checks += (this.cnt.checks / q - this.st.checks) * k; this.st.visits += (this.cnt.visits / q - this.st.visits) * k;
+      }
+      this.sendFrame(steps);
+    }
+    sendFrame(steps) {
+      const M = this.M;
+      let buf = null;
+      while (this.posBufs.length) { const b = this.posBufs.pop(); if (b.length >= 2 * M) { buf = b; break; } }
+      if (!buf) buf = new Float32Array(Math.max(2 * M, 2048));
+      for (let a = 0; a < M; a++) { const id = this.idOf[a]; buf[2 * id] = this.ax[a]; buf[2 * id + 1] = this.ay[a]; }
+      let settled = 0;
+      for (let a = 0; a < M; a++) { const g = this.groups[this.aG[a]]; if (g && !g.respawn && (this.ax[a] - g.cx) ** 2 + (this.ay[a] - g.cy) ** 2 <= g.r * g.r) settled++; }
+      const msg = { type: 'frame', pos: buf, M, steps, time: this.time, simMs: this.st.simMs, upkeepMs: this.st.upkeepMs, moveMs: this.st.moveMs,
+        checks: this.st.checks, visits: this.st.visits, structure: this.structure, moving: M ? this.moved / M : 0, settled, groups: this.groupList().length };
+      const tr = [buf.buffer];
+      if (this.sentVersion !== this.agentVersion) {
+        const gids = new Uint16Array(M), sizes = new Uint8Array(M);
+        for (let a = 0; a < M; a++) { const id = this.idOf[a]; gids[id] = this.aG[a]; sizes[id] = this.aS[a]; }
+        msg.gids = gids; msg.sizes = sizes; msg.agentVersion = this.agentVersion; msg.layoutVersion = this.layoutVersion; tr.push(gids.buffer, sizes.buffer);
+        this.sentVersion = this.agentVersion;
+      }
+      const bins = this.st.arrBins; let rg = 0; for (let i = 1; i <= MAX_GROUPS; i++) if (this.groups[i] && this.groups[i].respawn) rg++;
+      msg.arrivals = bins.length && rg ? bins.reduce((p, q) => p + q, 0) / bins.length / rg : 0;
+      this.post(msg, tr);
+    }
+    // (group, size class, sector) triples the field worker should keep fresh, plus a congestion snapshot.
+    sendDemand() {
+      const mark = this.demandMark; mark.fill(0);
+      const out = [];
+      const add = (g, c, s) => { const k = (g * NCLS + c) * NSEC + s; if (!mark[k]) { mark[k] = 1; out.push(g, c, s); } };
+      for (let a = 0; a < this.M; a++) {
+        const g = this.aG[a]; if (!g || !this.groups[g]) continue;
+        const cl = this.aC[a], x = this.ax[a], y = this.ay[a], cx = x | 0, cy = y | 0, sx = cx >> 5, sy = cy >> 5;
+        const reach = 2 + this.aR[a];
+        add(g, cl, sy * NSX + sx);
+        if (cl > 0) add(g, 0, sy * NSX + sx); // big agents fall back on the small-agent field
+        const lx = x - sx * SEC, ly = y - sy * SEC;
+        const ex = lx < reach && sx > 0 ? -1 : (lx > SEC - reach && sx < NSX - 1 ? 1 : 0);
+        const ey = ly < reach && sy > 0 ? -1 : (ly > SEC - reach && sy < NSX - 1 ? 1 : 0);
+        if (ex) add(g, cl, sy * NSX + sx + ex);
+        if (ey) add(g, cl, (sy + ey) * NSX + sx);
+        if (ex && ey) add(g, cl, (sy + ey) * NSX + sx + ex);
+      }
+      const secs = [];
+      for (let s = 0; s < NSEC; s++) if (this.secActive[s] > this.time - 5) secs.push(s);
+      const data = new Float32Array(secs.length * 6144), t = this.time;
+      for (let i = 0; i < secs.length; i++) {
+        const s = secs[i], ox = (s % NSX) * SEC, oy = ((s / NSX) | 0) * SEC, base = i * 6144;
+        for (let li = 0; li < 1024; li++) {
+          const c = (oy + (li >> 5)) * W + ox + (li & 31), f = decayFor(t - this.lastT[c]), b = 4 * c, b4 = base + 2048 + 4 * li;
+          data[base + li] = this.rho[c] * f; data[base + 1024 + li] = this.jam[c] * f;
+          data[b4] = this.F4[b] * f; data[b4 + 1] = this.F4[b + 1] * f; data[b4 + 2] = this.F4[b + 2] * f; data[b4 + 3] = this.F4[b + 3] * f;
+        }
+      }
+      const ta = Int32Array.from(out), sa = Int32Array.from(secs);
+      this.postPeer({ type: 'demand', triples: ta, secs: sa, data }, [ta.buffer, sa.buffer, data.buffer]);
+    }
+    sendHeat() {
+      const t = this.time, secs = [];
+      for (let s = 0; s < NSEC; s++) if (this.secActive[s] > t - 5 || this.heatSent.has(s)) secs.push(s);
+      const data = new Uint8Array(secs.length * 1024), keep = new Set();
+      for (let i = 0; i < secs.length; i++) {
+        const s = secs[i], ox = (s % NSX) * SEC, oy = ((s / NSX) | 0) * SEC;
+        let any = false;
+        for (let li = 0; li < 1024; li++) {
+          const c = (oy + (li >> 5)) * W + ox + (li & 31), f = decayFor(t - this.lastT[c]);
+          const v = Math.min(255, Math.round((this.rho[c] + this.jam[c]) * f / 6 * 255));
+          data[i * 1024 + li] = v; if (v) any = true;
+        }
+        if (any) keep.add(s);
+      }
+      this.heatSent = keep;
+      if (secs.length) { const sa = Int32Array.from(secs); this.post({ type: 'heat', secs: sa, data }, [sa.buffer, data.buffer]); }
+    }
+
+    // ------------------------------------------------------------- state exchange with the GPU back end
+    gidsById() { const M = this.M, out = new Uint16Array(M); for (let a = 0; a < M; a++) out[this.idOf[a]] = this.aG[a]; return out; }
+    postState(opts) { // arrays in external-id order, which is also the GPU's agent order
+      const M = this.M, pos = new Float32Array(2 * M), vel = new Float32Array(2 * M), flags = new Uint32Array(M);
+      const stuck = new Float32Array(M), tryTick = new Uint32Array(M), gids = new Uint16Array(M), sizes = new Uint8Array(M);
+      for (let a = 0; a < M; a++) {
+        const i = this.idOf[a];
+        pos[2 * i] = this.ax[a]; pos[2 * i + 1] = this.ay[a]; vel[2 * i] = this.aVX[a]; vel[2 * i + 1] = this.aVY[a];
+        flags[i] = (this.aSide[a] > 0 ? 1 : 0) | (this.aSleep[a] ? 2 : 0);
+        stuck[i] = this.aStuck[a]; tryTick[i] = this.aTry[a]; gids[i] = this.aG[a]; sizes[i] = this.aS[a];
+      }
+      const msg = { type: 'state', M, pos, vel, stuck, flags, tryTick, gids, sizes, time: this.time, tick: this.tick, agentVersion: this.agentVersion, layoutVersion: this.layoutVersion, resetCong: !!opts.resetCong };
+      const tr = [pos.buffer, vel.buffer, flags.buffer, stuck.buffer, tryTick.buffer, gids.buffer, sizes.buffer];
+      if (opts.full) {
+        const c = { rho: this.rho.slice(), jam: this.jam.slice(), F4: this.F4.slice(), lastT: this.lastT.slice(), secActive: this.secActive.slice() };
+        tr.push(c.rho.buffer, c.jam.buffer, c.F4.buffer, c.lastT.buffer, c.secActive.buffer);
+        msg.cong = c;
+        const slots = [];
+        for (let i = 1; i <= MAX_GROUPS; i++) {
+          const g = this.groups[i]; if (!g || !g.slots) continue;
+          for (let c2 = 0; c2 < NCLS; c2++) for (let s = 0; s < NSEC; s++) if (g.slots[c2][s]) { const fx = g.slots[c2][s].fx.slice(), fy = g.slots[c2][s].fy.slice(); slots.push({ g: i, c: c2, s, fx, fy }); tr.push(fx.buffer, fy.buffer); }
+        }
+        msg.slots = slots;
+      }
+      this.sentVersion = this.agentVersion;
+      this.post(msg, tr);
+    }
+    importState(st) { // arrives in external-id order: storage restarts in that order, sizes and groups kept from this worker
+      const M = st.M; this.grow(M);
+      const gids = this.gidsById(), sizes = new Uint8Array(this.M);
+      for (let a = 0; a < this.M; a++) sizes[this.idOf[a]] = this.aS[a];
+      this.bvClearAll();
+      this.M = M;
+      for (let a = 0; a < M; a++) {
+        const s = sizes[a], r = SIZES[s];
+        this.idOf[a] = a; this.slotOf[a] = a; this.aG[a] = gids[a]; this.aS[a] = s; this.aR[a] = r; this.aC[a] = CLASS_OF[s]; this.aLv[a] = levelOf(r);
+        this.ax[a] = st.pos[2 * a]; this.ay[a] = st.pos[2 * a + 1]; this.aVX[a] = st.vel[2 * a]; this.aVY[a] = st.vel[2 * a + 1];
+        this.aStuck[a] = st.stuck[a]; this.aSide[a] = (st.flags[a] & 1) ? 1 : -1; this.aSleep[a] = (st.flags[a] & 2) ? 1 : 0;
+        this.aTry[a] = st.tryTick[a]; this.aT0[a] = st.time;
+      }
+      if (st.cong) { this.rho.set(st.cong.rho); this.jam.set(st.cong.jam); this.F4.set(st.cong.F4); this.lastT.set(st.cong.lastT); this.secActive.set(st.cong.secActive); }
+      if (st.slots) for (const sl of st.slots) { const g = this.groups[sl.g]; if (g && g.slots) g.slots[sl.c || 0][sl.s] = { fx: sl.fx, fy: sl.fy }; }
+      this.time = st.time; this.tick = st.tick; this.wakeAll = this.tick; this.acc = 0;
+      this.st.arrBins = []; this.st.arrBin = 0; this.st.binEnd = Math.floor(this.time) + 1;
+      if (this.structure === 1) this.bvBuild(); else this.rebuildGrid();
+      this.agentVersion++;
+    }
+    cull() { // agents caught inside walls painted while the GPU back end ran
+      const r = this.cullRect; this.cullRect = null;
+      if (!r) return;
+      for (let a = this.M - 1; a >= 0; a--) {
+        const x = this.ax[a], y = this.ay[a], ra = this.aR[a];
+        if (x < r[0] - 1 - ra || x > r[2] + 2 + ra || y < r[1] - 1 - ra || y > r[3] + 2 + ra) continue;
+        if (!this.freeOfWalls(x, y, ra)) { this.removeAgent(a); this.layoutVersion++; }
+      }
+      this.agentVersion++;
+    }
+
+    // ------------------------------------------------------------- spawning and scenes
+    sizeList(count, size) { // sizes for a crowd, biggest first so they find room
+      const out = [];
+      if (size >= 0 && size < SIZES.length) { for (let i = 0; i < count; i++) out.push(size); return out; }
+      for (let s = SIZES.length - 1; s >= 1; s--) { const n = Math.round(count * MIX[s]); for (let i = 0; i < n; i++) out.push(s); }
+      while (out.length < count) out.push(0);
+      return out.slice(0, count);
+    }
+    areaOf(list) { let a = 0; for (const s of list) a += SIZES[s] * SIZES[s]; return a; }
+    // Place agents of the listed sizes in a disc, avoiding walls and each other (tile buckets).
+    spawnDisc(g, sp, list, cells) {
+      let made = 0;
+      for (const s of list) {
+        const r = SIZES[s], reach = Math.ceil(r + RMAX);
+        for (let t = 0; t < 120; t++) {
+          this.randomIn(sp); const x = this.px, y = this.py;
+          if (x < 0 || y < 0 || x >= W || y >= H || !this.freeOfWalls(x, y, r)) continue;
+          const tx = x | 0, ty = y | 0;
+          let ok = true;
+          for (let dy = -reach; dy <= reach && ok; dy++) for (let dx = -reach; dx <= reach && ok; dx++) {
+            const l = cells.get((ty + dy) * W + tx + dx); if (!l) continue;
+            for (const b of l) { const ex = this.ax[b] - x, ey = this.ay[b] - y, rr = r + this.aR[b]; if (ex * ex + ey * ey < rr * rr) { ok = false; break; } }
+          }
+          if (!ok) continue;
+          const a = this.addAgent(x, y, g, s);
+          const k = ty * W + tx; const l = cells.get(k); if (l) l.push(a); else cells.set(k, [a]);
+          made++; break;
+        }
+      }
+      return made;
+    }
+    spawnIdle(cx, cy, size) {
+      const n = size >= 0 ? [500, 200, 60, 20, 6][size] : 500, list = this.sizeList(n, size);
+      const cells = new Map();
+      for (let a = 0; a < this.M; a++) { const x = this.ax[a], y = this.ay[a]; if ((x - cx) ** 2 + (y - cy) ** 2 > 3600) continue; const k = (y | 0) * W + (x | 0); const l = cells.get(k); if (l) l.push(a); else cells.set(k, [a]); }
+      this.spawnDisc(0, { cx, cy, r: Math.max(3, 1.3 * this.targetRadius(this.areaOf(list))) }, list, cells);
+      this.agentVersion++; this.wakeAll = this.tick;
+    }
+    blocks(walls, rnd, count, keepClear) {
+      for (let i = 0; i < count; i++) {
+        const w = 2 + Math.floor(rnd() * 9), h = 2 + Math.floor(rnd() * 9), x0 = Math.floor(rnd() * (W - w)), y0 = Math.floor(rnd() * (H - h));
+        let clear = true;
+        for (let y = y0 - 2; y < y0 + h + 2 && clear; y += 2) for (let x = x0 - 2; x < x0 + w + 2; x += 2) if (keepClear(x, y)) { clear = false; break; }
+        if (!clear) continue;
+        for (let y = y0; y < y0 + h; y++) walls.fill(1, y * W + x0, y * W + x0 + w);
+      }
+    }
+    loadScene(name, count) {
+      this.scene = { name, count };
+      const walls = new Uint8Array(N), rnd = mulberry32(7), C = 512;
+      this.bvClearAll(); this.M = 0; this.groups.fill(null); this.rng = mulberry32(this.seed);
+      this.time = 0; this.tick = 0; this.steps = 0; this.acc = 0; this.wakeAll = 0;
+      this.st.arrBins = []; this.st.arrBin = 0; this.st.binEnd = 1;
+      this.loading = true;
+      const groups = []; let camera = { cx: C, cy: C, extent: 40 };
+      const uniform = name === 'uniform' || name === 'swap' || name === 'corridor4';
+      const crowd = (n) => this.sizeList(n, uniform ? 0 : -1);
+      const circle = (n, R, per) => {
+        const spawnR = Math.max(4, 1.3 * this.targetRadius(this.areaOf(crowd(per))));
+        for (let i = 0; i < n; i++) {
+          const t = 2 * Math.PI * i / n, u = t + Math.PI;
+          groups.push({ spawn: { cx: C + R * Math.cos(t), cy: C + R * Math.sin(t), r: spawnR }, target: { cx: C + R * Math.cos(u), cy: C + R * Math.sin(u), r: spawnR }, list: crowd(per) });
+        }
+        return spawnR;
+      };
+      if (name === 'swap' || name === 'corridor4') { // Lab 2 validation scenes (small agents only)
+        const A = { cx: C - 26, cy: C, r: 4 }, B = { cx: C + 26, cy: C, r: 4 };
+        groups.push({ spawn: A, target: B, list: crowd(400) }, { spawn: B, target: A, list: crowd(400) });
+        if (name === 'corridor4') for (let y = 0; y < H; y++) if (y < C - 2 || y >= C + 2) walls.fill(1, y * W + C - 8, y * W + C + 8);
+        camera = { cx: C, cy: C, extent: 32 };
+      } else if (name === 'corridor' || name === 'corridor8') { // 16 tiles wide: room for a giant lane each way
+        const half = name === 'corridor8' ? 4 : 8;
+        const list = crowd(400), r = Math.max(5, 1.3 * this.targetRadius(this.areaOf(list)));
+        const A = { cx: C - 30 - r, cy: C, r }, B = { cx: C + 30 + r, cy: C, r };
+        groups.push({ spawn: A, target: B, list }, { spawn: B, target: A, list: crowd(400) });
+        for (let y = 0; y < H; y++) if (y < C - half || y >= C + half) walls.fill(1, y * W + C - 12, y * W + C + 12);
+        camera = { cx: C, cy: C, extent: 30 + 2 * r };
+      } else if (name === 'circle8') {
+        const r = circle(8, 45, 250);
+        camera = { cx: C, cy: C, extent: 45 + r + 4 };
+      } else if (name === 'mixed' || name === 'uniform') {
+        const per = Math.max(1, Math.round(count / 8)), r = circle(8, 150, per);
+        const discs = groups.map((g) => g.spawn);
+        this.blocks(walls, rnd, 900, (x, y) => discs.some((d) => (x - d.cx) ** 2 + (y - d.cy) ** 2 < (d.r + 4) ** 2));
+        camera = { cx: C, cy: C, extent: 150 + r };
+      }
+      if (name === 'sandbox') { // idle crowds of mixed sizes to select and order
+        const nb = 12, per = Math.max(1, Math.round(count / nb)), br = Math.max(3, 1.3 * this.targetRadius(this.areaOf(crowd(per))));
+        const blobs = [];
+        for (let i = 0; i < nb; i++) { const t = 2 * Math.PI * i / nb; blobs.push({ cx: C + 130 * Math.cos(t), cy: C + 130 * Math.sin(t), r: br }); }
+        this.blocks(walls, rnd, 900, (x, y) => blobs.some((d) => (x - d.cx) ** 2 + (y - d.cy) ** 2 < (d.r + 4) ** 2));
+        this.setWallsAll(walls);
+        const cells = new Map();
+        for (const b of blobs) this.spawnDisc(0, b, crowd(per), cells);
+        camera = { cx: C, cy: C, extent: 130 + br + 4 };
+      } else {
+        this.setWallsAll(walls);
+        const cells = new Map();
+        groups.forEach((d, i) => {
+          const id = i + 1;
+          this.makeGroup(id, d.target.cx, d.target.cy, d.target.r, { respawn: true, spawn: d.spawn });
+          this.spawnDisc(id, d.spawn, d.list, cells);
+        });
+      }
+      this.loading = false;
+      if (this.structure === 1) this.bvBuild();
+      this.rebuildGrid();
+      this.agentVersion++; this.layoutVersion++;
+      const wcopy = walls.slice();
+      this.post({ type: 'walls', walls: wcopy, camera, scene: name }, [wcopy.buffer]);
+      const fcopy = walls.slice();
+      this.postPeer({ type: 'walls', walls: fcopy }, [fcopy.buffer]);
+      this.publishGroups();
+      this.sendDemand();
+    }
+  }
+  return SimCore;
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
+
+</script>
+<script id="src-gpu">
+// Flow Field Lab 3: the agent step in GPU compute for agents of mixed sizes.
+// Per substep: hash agents into one table per size level (bins of 0.25, 1 and 4 tiles), prefix-sum
+// all three at once, fold footprint-weighted congestion into lazily decayed tile channels, then move
+// the levels in turn, biggest first. Within a level, nine coloured passes keep concurrently moved
+// agents further apart than they can reach (same-coloured bins are 0.5, 2 and 8 tiles apart), and
+// agents of the other levels stay still, so no two threads ever move agents that could touch.
+var GpuSim = (function () {
+  'use strict';
+  const { N, P, SIZES, CLASS_OF } = FF;
+  const T0MAX = 1 << 18, T1MAX = 1 << 16, T2MAX = 1 << 14, TTMAX = T0MAX + T1MAX + T2MAX;
+  const SLOTS = 4096, MAXSNAP = 512, KMAX = 16, PSTRIDE = 256, PWORDS = PSTRIDE / 4, NSLOT = 28; // 27 level/colour slots + 1 common
+  const DEMW = Math.ceil(257 * 3 * 1024 / 32);
+  const OFF = (() => {
+    const o = { count: 0, start: TTMAX }; o.stamp = 2 * TTMAX + 4; o.block = o.stamp + N; o.ctr = o.block + 1024;
+    o.arr = o.ctr + 16; o.dem = o.arr + 260; o.snap = o.dem + DEMW; o.bag = o.snap + MAXSNAP; return o;
+  })();
+  const STATS_WORDS = OFF.bag - OFF.ctr; // counters | arrivals per group | demand bits | snapshot sector list
+  const LEVEL_OF = SIZES.map((r) => (r <= 0.1 ? 0 : r <= 0.5 ? 1 : 2));
+  const LEVEL_MAXR = [0.1, 0.5, 2.0], LEVEL_BIN = [0.25, 1, 4], TMAX = [T0MAX, T1MAX, T2MAX];
+
+  const f32 = new Float32Array(1), u32v = new Uint32Array(f32.buffer);
+  function toHalf(v) {
+    f32[0] = v; const x = u32v[0], sign = (x >>> 16) & 0x8000;
+    const e = ((x >>> 23) & 0xff) - 112, m = x & 0x7fffff;
+    if (e <= 0) { if (e < -10) return sign; const mm = (m | 0x800000) >> (1 - e); return sign | ((mm + 0x1000) >> 13); }
+    if (e >= 31) return sign | 0x7c00;
+    return sign | ((e << 10) + ((m + 0x1000) >> 13));
+  }
+  const HALF = new Float32Array(65536);
+  for (let h = 0; h < 65536; h++) {
+    const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
+    HALF[h] = e === 0 ? s * m * 5.960464477539063e-8 : e === 31 ? (m ? NaN : s * Infinity) : s * (1 + m / 1024) * Math.pow(2, e - 15);
+  }
+  const fl = (v) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
+  const arr = (type, xs) => `array<${type}, ${xs.length}>(${xs.map((v) => (type === 'f32' ? fl(v) : v + 'u')).join(', ')})`;
+
+  const WGSL = `
+const R0: f32 = ${fl(SIZES[0])};
+const WM: i32 = 1024;
+const NT: u32 = 1048576u;
+const MAXTURN: i32 = ${P.maxTurnSteps};
+const ESC_AFTER: f32 = ${fl(P.escapeAfter)};
+const ESC_TRIES: u32 = ${P.escapeTries}u;
+const GAIN: f32 = ${fl(P.gain)};
+const DECAY: f32 = ${fl(P.decay)};
+const ANTIC: f32 = ${fl(P.anticipate)};
+const LOOK: f32 = ${fl(P.lookAhead)};
+const ONCREF: f32 = ${fl(P.oncRef)};
+const PASS_SCALE: f32 = ${fl(P.passScale)};
+const PASS_DOT: f32 = ${fl(P.passDot)};
+const MAXC: u32 = 128u;
+const FIXW: f32 = 256.0;
+const SIDE: u32 = 1u;
+const SLEEP: u32 = 2u;
+const ARRIVED: u32 = 4u;
+const TAU: f32 = 6.28318530718;
+const MAXSNAP: u32 = ${MAXSNAP}u;
+
+struct Params { tick: u32, color: u32, wakeAll: u32, wakeEvery: u32, M: u32, level: u32, TT: u32, seed: u32,
+  time: f32, dt: f32, L: f32, blocks: u32, T0: u32, T1: u32, T2: u32, n0: u32, n1: u32, n2: u32,
+  offStart: u32, offStamp: u32, offBlock: u32, offCtr: u32, offArr: u32, offDem: u32, offSnap: u32, offBag: u32,
+  touchCap: u32, pad0: u32 };
+struct Agent { pos: vec2f, vel: vec2f, stuck: f32, flags: u32, tryTick: u32, bucket: u32 };
+struct Group { a: vec4f, b: vec4f }; // a: target x, y, radius, respawn; b: spawn x, y, radius
+
+@group(0) @binding(0) var<storage, read_write> agents: array<Agent>;
+@group(0) @binding(1) var<storage, read> info: array<u32>;
+@group(0) @binding(2) var<storage, read_write> grid: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read> walls: array<u32>;
+@group(0) @binding(4) var<storage, read> slotIndex: array<i32>;
+@group(0) @binding(5) var<storage, read> atlas: array<u32>;
+@group(0) @binding(6) var<storage, read_write> cong: array<vec4f>;
+@group(0) @binding(7) var<storage, read_write> acc: array<atomic<u32>>;
+@group(0) @binding(8) var<storage, read_write> tiles: array<atomic<u32>>;
+@group(0) @binding(9) var<uniform> groups: array<Group, 257>;
+@group(0) @binding(10) var<storage, read_write> snapOut: array<u32>;
+@group(0) @binding(11) var<storage, read_write> heatOut: array<u32>;
+@group(1) @binding(0) var<uniform> P: Params;
+
+var<workgroup> sh: array<u32, 256>;
+
+fn sizeOf(f: u32) -> u32 { return min((f >> 8u) & 7u, 4u); }
+fn radiusOf(s: u32) -> f32 { var t = ${arr('f32', SIZES)}; return t[s]; }
+fn classOf(s: u32) -> u32 { var t = ${arr('u32', CLASS_OF)}; return t[s]; }
+fn levelOf(s: u32) -> u32 { var t = ${arr('u32', LEVEL_OF)}; return t[s]; }
+fn binSize(k: u32) -> f32 { var t = ${arr('f32', LEVEL_BIN)}; return t[k]; }
+fn maxR(k: u32) -> f32 { var t = ${arr('f32', LEVEL_MAXR)}; return t[k]; }
+fn levelT(k: u32) -> u32 { return select(select(P.T2, P.T1, k == 1u), P.T0, k == 0u); }
+fn levelBase(k: u32) -> u32 { return select(select(P.T0 + P.T1, P.T0, k == 1u), 0u, k == 0u); }
+fn levelN(k: u32) -> u32 { return select(select(P.n2, P.n1, k == 1u), P.n0, k == 0u); }
+// Blocks of 8 x 8 bins are hashed; bins inside a block stay adjacent. Returns a global bucket index.
+fn hashBin(k: u32, bx: i32, by: i32) -> u32 {
+  let hb = ((bx >> 3) * 73856093) ^ ((by >> 3) * 19349663);
+  let h = (bitcast<u32>(hb) << 6u) | (bitcast<u32>(by & 7) << 3u) | bitcast<u32>(bx & 7);
+  return levelBase(k) + (h & (levelT(k) - 1u));
+}
+fn tileByte(cx: i32, cy: i32) -> u32 { let c = u32(cy * WM + cx); return (walls[c >> 2u] >> ((c & 3u) * 8u)) & 0xffu; }
+fn isWall(cx: i32, cy: i32) -> bool {
+  if (cx < 0 || cy < 0 || cx >= WM || cy >= WM) { return true; }
+  return (tileByte(cx, cy) & 1u) != 0u;
+}
+fn clearanceAt(cx: i32, cy: i32) -> f32 { return f32((tileByte(cx, cy) >> 1u) & 127u) / 32.0; }
+fn freeOfWalls(px: f32, py: f32, r: f32) -> bool {
+  if (px - r < 0.0 || py - r < 0.0 || px + r > 1024.0 || py + r > 1024.0) { return false; }
+  for (var cy = i32(floor(py - r)); cy <= i32(floor(py + r)); cy++) {
+    for (var cx = i32(floor(px - r)); cx <= i32(floor(px + r)); cx++) {
+      if (!isWall(cx, cy)) { continue; }
+      let qx = clamp(px, f32(cx), f32(cx + 1)); let qy = clamp(py, f32(cy), f32(cy + 1));
+      let ddx = px - qx; let ddy = py - qy;
+      if (ddx * ddx + ddy * ddy < r * r) { return false; }
+    }
+  }
+  return true;
+}
+// Group g's flow vector for size class c at a tile: xy, and z = 1 when known and non-zero.
+fn vecAt(g: u32, c: u32, cx: i32, cy: i32) -> vec3f {
+  if (cx < 0 || cy < 0 || cx >= WM || cy >= WM) { return vec3f(0.0); }
+  let si = slotIndex[(g * 3u + c) * 1024u + u32((cy / 32) * 32 + cx / 32)];
+  if (si < 0) { return vec3f(0.0); }
+  let v = unpack2x16float(atlas[u32(si) * 1024u + u32((cy % 32) * 32 + cx % 32)]);
+  if (v.x == 0.0 && v.y == 0.0) { return vec3f(0.0); }
+  return vec3f(v, 1.0);
+}
+fn sampleField(g: u32, c: u32, x: f32, y: f32) -> vec3f {
+  let u = x - 0.5; let v = y - 0.5; let x0 = i32(floor(u)); let y0 = i32(floor(v));
+  let fx = u - f32(x0); let fy = v - f32(y0);
+  var s = vec2f(0.0); var ws = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let vv = vecAt(g, c, x0 + (k & 1), y0 + (k >> 1u));
+    if (vv.z < 0.5) { continue; }
+    let w = select(1.0 - fx, fx, (k & 1) == 1) * select(1.0 - fy, fy, (k >> 1u) == 1);
+    s += w * vv.xy; ws += w;
+  }
+  var l = length(s);
+  if (ws <= 0.0 || l < 1e-3) {
+    let own = vecAt(g, c, i32(x), i32(y));
+    if (own.z < 0.5) { return vec3f(0.0); }
+    s = own.xy; l = length(s);
+  }
+  return vec3f(s / l, 1.0);
+}
+fn oncoming(c: u32, dx: f32, dy: f32) -> f32 {
+  let A = cong[2u * c]; let F = cong[2u * c + 1u];
+  let f = exp(-DECAY * (P.time - A.z));
+  return f * (select(-dx * F.x, dx * F.y, dx > 0.0) + select(-dy * F.z, dy * F.w, dy > 0.0));
+}
+fn pcg(v: u32) -> u32 { let s = v * 747796405u + 2891336453u; let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u; return (w >> 22u) ^ w; }
+fn rnd(a: u32, salt: u32) -> f32 { return f32(pcg(a ^ pcg(P.tick ^ pcg(salt + P.seed)))) * 2.3283064e-10; }
+fn tryMove(x: f32, y: f32, mx: f32, my: f32, n: u32, r: f32, wallFree: bool, cand: ptr<function, array<vec4f, 128>>) -> bool {
+  if (!wallFree && !freeOfWalls(x + mx, y + my, r)) { return false; }
+  for (var j = 0u; j < n; j++) {
+    let c = (*cand)[j];
+    let ddx = c.x - mx; let ddy = c.y - my; let dN = ddx * ddx + ddy * ddy;
+    if (dN < c.w && (c.z >= c.w || dN < c.z)) { return false; } // a new overlap, or a deeper one
+  }
+  return true;
+}
+fn tileStamp(cx: i32, cy: i32) -> u32 { return atomicLoad(&grid[P.offStamp + u32(cy * WM + cx)]); }
+// Wake sleepers whose reach covers this spot.
+fn stampAround(x: f32, y: f32, r: f32) {
+  let m = r + 0.35 + 3.0 * P.L;
+  let x0 = max(0, i32(floor(x - m))); let x1 = min(WM - 1, i32(floor(x + m)));
+  let y0 = max(0, i32(floor(y - m))); let y1 = min(WM - 1, i32(floor(y + m)));
+  for (var yy = y0; yy <= y1; yy++) { for (var xx = x0; xx <= x1; xx++) { atomicMax(&grid[P.offStamp + u32(yy * WM + xx)], P.tick); } }
+}
+fn commit(a: u32, ag: ptr<function, Agent>, px: f32, py: f32, r: f32) {
+  (*ag).vel = vec2f(px - (*ag).pos.x, py - (*ag).pos.y) / P.L;
+  (*ag).pos = vec2f(px, py); (*ag).stuck = 0.0; (*ag).flags = (*ag).flags & ~SLEEP;
+  agents[a] = *ag;
+  stampAround(px, py, r);
+  atomicAdd(&grid[P.offCtr + 1u], 1u);
+}
+
+fn moveAgent(a: u32) {
+  var ag = agents[a];
+  let g = info[a] & 0xffffu;
+  if (g == 0u) { if (ag.vel.x != 0.0 || ag.vel.y != 0.0) { agents[a].vel = vec2f(0.0); } return; }
+  let G = groups[g];
+  let sz = sizeOf(ag.flags); let ra = radiusOf(sz); let cls = classOf(sz);
+  let x = ag.pos.x; let y = ag.pos.y; let L = P.L; let dt = P.dt;
+  let cx = i32(x); let cy = i32(y);
+  if ((ag.flags & SLEEP) != 0u) { // nothing nearby has moved since it last failed: skip
+    let since = ag.tryTick;
+    var wake = (P.tick - since >= P.wakeEvery) || (P.wakeAll > since) || (ag.stuck + dt > ESC_AFTER);
+    if (!wake) {
+      if (ra <= 0.35) { wake = tileStamp(cx, cy) >= since; }
+      else {
+        let e = ra - 0.35;
+        for (var yy = max(0, i32(floor(y - e))); yy <= min(WM - 1, i32(floor(y + e))); yy++) {
+          for (var xx = max(0, i32(floor(x - e))); xx <= min(WM - 1, i32(floor(x + e))); xx++) { if (tileStamp(xx, yy) >= since) { wake = true; } }
+        }
+      }
+    }
+    if (!wake) { ag.stuck += dt; ag.vel = vec2f(0.0); agents[a] = ag; return; }
+  }
+  ag.vel = vec2f(0.0);
+  var dx = 0.0; var dy = 0.0;
+  let tdx = G.a.x - x; let tdy = G.a.y - y; let td2 = tdx * tdx + tdy * tdy;
+  if (td2 <= G.a.z * G.a.z) { // inside the target disc
+    if (G.a.w > 0.5) { ag.flags = ag.flags | ARRIVED; agents[a] = ag; return; }
+    let l = sqrt(td2);
+    if (l < L) { agents[a] = ag; return; }
+    dx = tdx / l; dy = tdy / l;
+  } else {
+    var sm = sampleField(g, cls, x, y);
+    if (sm.z < 0.5 && cls > 0u) { sm = sampleField(g, 0u, x, y); } // big agents fall back on the small-agent field
+    if (sm.z > 0.5) {
+      dx = sm.x; dy = sm.y;
+      let look = LOOK + 2.0 * (ra - R0); // bigger agents read oncoming traffic early enough to sidestep it
+      let qx = i32(floor(x + dx * look)); let qy = i32(floor(y + dy * look));
+      if (qx >= 0 && qy >= 0 && qx < WM && qy < WM) {
+        let k2 = min(1.0, oncoming(u32(qy * WM + qx), dx, dy) / ONCREF) * ANTIC;
+        if (k2 > 0.0) { let nx = dx - k2 * dy; let ny = dy + k2 * dx; let l = sqrt(nx * nx + ny * ny); dx = nx / l; dy = ny / l; }
+      }
+    } else { let l = sqrt(td2); dx = tdx / l; dy = tdy / l; }
+  }
+  ag.tryTick = P.tick;
+  // Everything a move of length L could touch, from every level; opposing traffic may squeeze past.
+  var cand: array<vec4f, 128>; var n = 0u;
+  for (var k = 0u; k < 3u; k++) {
+    if (levelN(k) == 0u) { continue; }
+    let bs = binSize(k); let s = ra + maxR(k) + 2.0 * L;
+    let bx0 = i32(floor((x - s) / bs)); let bx1 = i32(floor((x + s) / bs));
+    let by0 = i32(floor((y - s) / bs)); let by1 = i32(floor((y + s) / bs));
+    for (var by = by0; by <= by1; by++) {
+      for (var bx = bx0; bx <= bx1; bx++) {
+        let h = hashBin(k, bx, by);
+        let j1 = atomicLoad(&grid[P.offStart + h + 1u]);
+        for (var j = atomicLoad(&grid[P.offStart + h]); j < j1; j++) {
+          let o = atomicLoad(&grid[P.offBag + j]);
+          if (o == a) { continue; }
+          let ao = agents[o];
+          let rr = ra + radiusOf(sizeOf(ao.flags)); let lim = rr + L;
+          let ex = ao.pos.x - x; let ey = ao.pos.y - y; let d2 = ex * ex + ey * ey;
+          if (d2 >= lim * lim || n >= MAXC) { continue; }
+          var cc = rr * rr;
+          let go = info[o] & 0xffffu;
+          if (go != 0u && go != g) {
+            let v = vecAt(go, classOf(sizeOf(ao.flags)), i32(ao.pos.x), i32(ao.pos.y));
+            if (v.z > 0.5 && v.x * dx + v.y * dy < PASS_DOT) { cc = cc * PASS_SCALE * PASS_SCALE; }
+          }
+          cand[n] = vec4f(ex, ey, d2, cc); n++;
+        }
+      }
+    }
+  }
+  let wallFree = clearanceAt(cx, cy) >= ra + L + 0.71;
+  if (tryMove(x, y, L * dx, L * dy, n, ra, wallFree, &cand)) { commit(a, &ag, x + L * dx, y + L * dy, ra); return; }
+  let base = i32(round(atan2(dy, dx) / (TAU / 32.0))) & 31;
+  let side = select(-1, 1, (ag.flags & SIDE) != 0u);
+  for (var s = 1; s <= MAXTURN; s++) {
+    for (var q = 0; q < 2; q++) {
+      let idx = (base + select(-side, side, q == 0) * s) & 31;
+      let ang = f32(idx) * (TAU / 32.0); let mx = L * cos(ang); let my = L * sin(ang);
+      if (tryMove(x, y, mx, my, n, ra, wallFree, &cand)) { commit(a, &ag, x + mx, y + my, ra); return; }
+    }
+  }
+  ag.stuck += dt;
+  if (ag.stuck > ESC_AFTER) { // one random escape attempt per window, then flip side
+    for (var t = 0u; t < ESC_TRIES; t++) {
+      let idx = min(u32(rnd(a, t) * 32.0), 31u);
+      let ang = f32(idx) * (TAU / 32.0); let mx = L * cos(ang); let my = L * sin(ang);
+      if (tryMove(x, y, mx, my, n, ra, wallFree, &cand)) { ag.flags = ag.flags ^ SIDE; commit(a, &ag, x + mx, y + my, ra); return; }
+    }
+    ag.stuck = 0.0; ag.flags = ag.flags ^ SIDE;
+  }
+  ag.flags = ag.flags | SLEEP;
+  agents[a] = ag;
+}
+
+// Footprint-weighted congestion input: the first agent on a tile this substep queues it.
+fn addCong(c: u32, w: u32, v: vec2f) {
+  let stamp = P.tick + 1u;
+  if (atomicExchange(&tiles[c], stamp) != stamp) { let k = atomicAdd(&grid[P.offCtr], 1u); if (k < P.touchCap) { atomicStore(&tiles[NT + k], c); } }
+  atomicAdd(&acc[6u * c], w);
+  if (v.x == 0.0 && v.y == 0.0) { atomicAdd(&acc[6u * c + 1u], w); return; }
+  let fw = f32(w);
+  if (v.x > 0.0) { atomicAdd(&acc[6u * c + 2u], u32(v.x * fw)); } else { atomicAdd(&acc[6u * c + 3u], u32(-v.x * fw)); }
+  if (v.y > 0.0) { atomicAdd(&acc[6u * c + 4u], u32(v.y * fw)); } else { atomicAdd(&acc[6u * c + 5u], u32(-v.y * fw)); }
+}
+@compute @workgroup_size(256) fn binPass(@builtin(global_invocation_id) gid: vec3u) {
+  let a = gid.x; if (a >= P.M) { return; }
+  let ag = agents[a];
+  let sz = sizeOf(ag.flags); let lv = levelOf(sz); let bs = binSize(lv);
+  let bx = i32(floor(ag.pos.x / bs)); let by = i32(floor(ag.pos.y / bs));
+  let b = hashBin(lv, bx, by);
+  let color = u32(((bx % 3) + 3) % 3) + 3u * u32(((by % 3) + 3) % 3);
+  agents[a].bucket = b | (color << 28u);
+  atomicAdd(&grid[b], 1u);
+  let r = radiusOf(sz); let wf = (r / R0) * (r / R0) * FIXW; // a big agent counts as the small agents it displaces
+  let x = ag.pos.x; let y = ag.pos.y;
+  let tc = u32(clamp(i32(y), 0, WM - 1) * WM + clamp(i32(x), 0, WM - 1));
+  if (r <= 0.35) { addCong(tc, u32(round(wf)), ag.vel); return; }
+  let tx0 = max(0, i32(floor(x - r))); let tx1 = min(WM - 1, i32(floor(x + r)));
+  let ty0 = max(0, i32(floor(y - r))); let ty1 = min(WM - 1, i32(floor(y + r)));
+  var k = 0u;
+  for (var ty = ty0; ty <= ty1; ty++) { for (var tx = tx0; tx <= tx1; tx++) { let ddx = f32(tx) + 0.5 - x; let ddy = f32(ty) + 0.5 - y; if (ddx * ddx + ddy * ddy <= r * r) { k++; } } }
+  if (k == 0u) { addCong(tc, u32(round(wf)), ag.vel); return; }
+  let wk = u32(round(wf / f32(k)));
+  for (var ty = ty0; ty <= ty1; ty++) { for (var tx = tx0; tx <= tx1; tx++) { let ddx = f32(tx) + 0.5 - x; let ddy = f32(ty) + 0.5 - y; if (ddx * ddx + ddy * ddy <= r * r) { addCong(u32(ty * WM + tx), wk, ag.vel); } } }
+}
+@compute @workgroup_size(256) fn scanA(@builtin(local_invocation_id) lid: vec3u, @builtin(workgroup_id) wid: vec3u) {
+  let base = wid.x * 1024u + lid.x * 4u;
+  var v: array<u32, 4>; var sum = 0u;
+  for (var i = 0u; i < 4u; i++) { v[i] = atomicLoad(&grid[base + i]); sum += v[i]; }
+  sh[lid.x] = sum;
+  workgroupBarrier();
+  for (var off = 1u; off < 256u; off = off << 1u) {
+    var t = 0u;
+    if (lid.x >= off) { t = sh[lid.x - off]; }
+    workgroupBarrier();
+    sh[lid.x] += t;
+    workgroupBarrier();
+  }
+  var run = sh[lid.x] - sum;
+  for (var i = 0u; i < 4u; i++) { atomicStore(&grid[P.offStart + base + i], run); run += v[i]; }
+  if (lid.x == 255u) { atomicStore(&grid[P.offBlock + wid.x], sh[255]); }
+}
+// Exclusive scan of up to 1024 block sums, four per thread.
+@compute @workgroup_size(256) fn scanB(@builtin(local_invocation_id) lid: vec3u) {
+  var v: array<u32, 4>; var sum = 0u;
+  for (var i = 0u; i < 4u; i++) { let k = lid.x * 4u + i; v[i] = 0u; if (k < P.blocks) { v[i] = atomicLoad(&grid[P.offBlock + k]); } sum += v[i]; }
+  sh[lid.x] = sum;
+  workgroupBarrier();
+  for (var off = 1u; off < 256u; off = off << 1u) {
+    var t = 0u;
+    if (lid.x >= off) { t = sh[lid.x - off]; }
+    workgroupBarrier();
+    sh[lid.x] += t;
+    workgroupBarrier();
+  }
+  var run = sh[lid.x] - sum;
+  for (var i = 0u; i < 4u; i++) { let k = lid.x * 4u + i; if (k < P.blocks) { atomicStore(&grid[P.offBlock + k], run); } run += v[i]; }
+  if (lid.x == 255u) { atomicStore(&grid[P.offStart + P.TT], sh[255]); }
+}
+@compute @workgroup_size(256) fn scanC(@builtin(local_invocation_id) lid: vec3u, @builtin(workgroup_id) wid: vec3u) {
+  let add = atomicLoad(&grid[P.offBlock + wid.x]);
+  let base = wid.x * 1024u + lid.x * 4u;
+  for (var i = 0u; i < 4u; i++) {
+    let s = atomicLoad(&grid[P.offStart + base + i]) + add;
+    atomicStore(&grid[P.offStart + base + i], s);
+    atomicStore(&grid[base + i], s); // counts become fill cursors for the scatter
+  }
+}
+@compute @workgroup_size(256) fn scatter(@builtin(global_invocation_id) gid: vec3u) {
+  let a = gid.x; if (a >= P.M) { return; }
+  let b = agents[a].bucket & 0x0fffffffu;
+  let k = atomicAdd(&grid[b], 1u);
+  atomicStore(&grid[P.offBag + k], a);
+}
+@compute @workgroup_size(256) fn applyCong(@builtin(global_invocation_id) gid: vec3u) {
+  let k = gid.x; if (k >= min(atomicLoad(&grid[P.offCtr]), P.touchCap)) { return; }
+  let c = atomicLoad(&tiles[NT + k]);
+  var A = cong[2u * c]; var F = cong[2u * c + 1u];
+  let f = exp(-DECAY * (P.time - A.z));
+  let gdt = GAIN * P.dt / FIXW;
+  A.x = A.x * f + gdt * f32(atomicExchange(&acc[6u * c], 0u));
+  A.y = A.y * f + gdt * f32(atomicExchange(&acc[6u * c + 1u], 0u));
+  F = F * f + gdt * vec4f(f32(atomicExchange(&acc[6u * c + 2u], 0u)), f32(atomicExchange(&acc[6u * c + 3u], 0u)),
+                          f32(atomicExchange(&acc[6u * c + 4u], 0u)), f32(atomicExchange(&acc[6u * c + 5u], 0u)));
+  A.z = P.time;
+  cong[2u * c] = A; cong[2u * c + 1u] = F;
+  let s = (c / 32768u) * 32u + (c % 1024u) / 32u;
+  cong[2u * NT + s / 4u][s % 4u] = P.time;
+}
+// One thread per bucket of the current level; it moves that bucket's agents of the current colour in turn.
+@compute @workgroup_size(64) fn stepAgents(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x; if (i >= levelT(P.level)) { return; }
+  let b = levelBase(P.level) + i;
+  let j1 = atomicLoad(&grid[P.offStart + b + 1u]);
+  for (var j = atomicLoad(&grid[P.offStart + b]); j < j1; j++) {
+    let a = atomicLoad(&grid[P.offBag + j]);
+    if ((agents[a].bucket >> 28u) != P.color) { continue; }
+    moveAgent(a);
+  }
+}
+fn freeOfAgents(px: f32, py: f32, r: f32, me: u32) -> bool {
+  for (var k = 0u; k < 3u; k++) {
+    if (levelN(k) == 0u) { continue; }
+    let bs = binSize(k); let s = r + maxR(k) + 2.0 * P.L;
+    for (var by = i32(floor((py - s) / bs)); by <= i32(floor((py + s) / bs)); by++) {
+      for (var bx = i32(floor((px - s) / bs)); bx <= i32(floor((px + s) / bs)); bx++) {
+        let h = hashBin(k, bx, by);
+        let j1 = atomicLoad(&grid[P.offStart + h + 1u]);
+        for (var j = atomicLoad(&grid[P.offStart + h]); j < j1; j++) {
+          let o = atomicLoad(&grid[P.offBag + j]);
+          if (o == me) { continue; }
+          let ao = agents[o]; let rr = r + radiusOf(sizeOf(ao.flags));
+          let d = ao.pos - vec2f(px, py);
+          if (dot(d, d) < rr * rr) { return false; }
+        }
+      }
+    }
+  }
+  return true;
+}
+@compute @workgroup_size(256) fn respawnPass(@builtin(global_invocation_id) gid: vec3u) {
+  let a = gid.x; if (a >= P.M) { return; }
+  var ag = agents[a];
+  if ((ag.flags & ARRIVED) == 0u) { return; }
+  let g = info[a] & 0xffffu; let G = groups[g]; let r = radiusOf(sizeOf(ag.flags));
+  atomicAdd(&grid[P.offArr + g], 1u);
+  var lx = -1.0; var ly = -1.0;
+  for (var t = 0u; t < 40u; t++) {
+    let th = TAU * rnd(a, 100u + 2u * t); let rr = G.b.z * sqrt(rnd(a, 101u + 2u * t));
+    let px = G.b.x + rr * cos(th); let py = G.b.y + rr * sin(th);
+    if (px < 0.0 || py < 0.0 || px >= 1024.0 || py >= 1024.0 || !freeOfWalls(px, py, r)) { continue; }
+    lx = px; ly = py;
+    if (freeOfAgents(px, py, r, a)) { break; }
+  }
+  if (lx >= 0.0) { ag.pos = vec2f(lx, ly); }
+  ag.vel = vec2f(0.0); ag.stuck = 0.0; ag.flags = ag.flags & ~(SLEEP | ARRIVED);
+  agents[a] = ag;
+  stampAround(ag.pos.x, ag.pos.y, r);
+}
+fn markDemand(gc: u32, s: i32) { let k = gc * 1024u + u32(s); atomicOr(&grid[P.offDem + (k >> 5u)], 1u << (k & 31u)); }
+@compute @workgroup_size(256) fn demandPass(@builtin(global_invocation_id) gid: vec3u) {
+  let a = gid.x; if (a >= P.M) { return; }
+  let g = info[a] & 0xffffu; if (g == 0u) { return; }
+  let ag = agents[a]; let p = ag.pos; let sz = sizeOf(ag.flags); let cls = classOf(sz); let r = radiusOf(sz);
+  let cx = clamp(i32(p.x), 0, WM - 1); let cy = clamp(i32(p.y), 0, WM - 1);
+  let sx = cx / 32; let sy = cy / 32;
+  markDemand(g * 3u + cls, sy * 32 + sx);
+  if (cls > 0u) { markDemand(g * 3u, sy * 32 + sx); }
+  let reach = 2.0 + r; let lx = p.x - f32(sx * 32); let ly = p.y - f32(sy * 32);
+  var ex = 0; if (lx < reach && sx > 0) { ex = -1; } else if (lx > 32.0 - reach && sx < 31) { ex = 1; }
+  var ey = 0; if (ly < reach && sy > 0) { ey = -1; } else if (ly > 32.0 - reach && sy < 31) { ey = 1; }
+  if (ex != 0) { markDemand(g * 3u + cls, sy * 32 + sx + ex); }
+  if (ey != 0) { markDemand(g * 3u + cls, (sy + ey) * 32 + sx); }
+  if (ex != 0 && ey != 0) { markDemand(g * 3u + cls, (sy + ey) * 32 + sx + ex); }
+  let G = groups[g];
+  if (G.a.w < 0.5) { let d = p - G.a.xy; if (dot(d, d) <= G.a.z * G.a.z) { atomicAdd(&grid[P.offCtr + 2u], 1u); } }
+}
+@compute @workgroup_size(256) fn secList(@builtin(global_invocation_id) gid: vec3u) {
+  let s = gid.x; if (s >= 1024u) { return; }
+  if (cong[2u * NT + s / 4u][s % 4u] > P.time - 5.0) {
+    let k = atomicAdd(&grid[P.offCtr + 3u], 1u);
+    if (k < MAXSNAP) { atomicStore(&grid[P.offSnap + k], s); }
+  }
+}
+@compute @workgroup_size(256) fn packSnap(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x; let k = i / 1024u;
+  if (k >= min(atomicLoad(&grid[P.offCtr + 3u]), MAXSNAP)) { return; }
+  let s = atomicLoad(&grid[P.offSnap + k]); let li = i % 1024u;
+  let c = ((s / 32u) * 32u + li / 32u) * 1024u + (s % 32u) * 32u + li % 32u;
+  let A = cong[2u * c]; let F = cong[2u * c + 1u]; let f = exp(-DECAY * (P.time - A.z));
+  let o = k * 3072u + li * 3u;
+  snapOut[o] = pack2x16float(vec2f(A.x, A.y) * f);
+  snapOut[o + 1u] = pack2x16float(F.xy * f);
+  snapOut[o + 2u] = pack2x16float(F.zw * f);
+}
+@compute @workgroup_size(256) fn heatPass(@builtin(global_invocation_id) gid: vec3u) {
+  let w = gid.x; if (w >= NT / 4u) { return; }
+  var res = 0u;
+  for (var j = 0u; j < 4u; j++) {
+    let A = cong[2u * (w * 4u + j)];
+    let v = (A.x + A.y) * exp(-DECAY * (P.time - A.z)) / 6.0;
+    res = res | (u32(clamp(v, 0.0, 1.0) * 255.0 + 0.5) << (8u * j));
+  }
+  heatOut[w] = res;
+}
+`;
+
+  const BINDINGS = {
+    binPass: [0, 2, 7, 8], scanA: [2], scanB: [2], scanC: [2], scatter: [0, 2], applyCong: [2, 6, 7, 8],
+    stepAgents: [0, 1, 2, 3, 4, 5, 6, 9], respawnPass: [0, 1, 2, 3, 9], demandPass: [0, 1, 2, 9],
+    secList: [2, 6], packSnap: [2, 6, 10], heatPass: [6, 11],
+  };
+  const TYPES = { 0: 'storage', 1: 'read-only-storage', 2: 'storage', 3: 'read-only-storage', 4: 'read-only-storage', 5: 'read-only-storage', 6: 'storage', 7: 'storage', 8: 'storage', 9: 'uniform', 10: 'storage', 11: 'storage' };
+
+  class GpuSim {
+    constructor(device) {
+      this.device = device; this.q = device.queue;
+      const S = GPUBufferUsage.STORAGE, D = GPUBufferUsage.COPY_DST, C = GPUBufferUsage.COPY_SRC, U = GPUBufferUsage.UNIFORM, MR = GPUBufferUsage.MAP_READ;
+      this.cap = 0; this.M = 0; this.tick = 1; this.time = 0; this.wakeAll = 0; this.seed = 12345;
+      this.levelN = [0, 0, 0]; this.levelT = [1024, 1024, 1024];
+      this.wallsBuf = device.createBuffer({ size: N, usage: S | D });
+      this.slotIndexBuf = device.createBuffer({ size: 257 * 3 * 1024 * 4, usage: S | D });
+      this.atlasBuf = device.createBuffer({ size: SLOTS * 1024 * 4, usage: S | D });
+      this.congBuf = device.createBuffer({ size: (2 * N + 256) * 16, usage: S | D | C });
+      this.accBuf = device.createBuffer({ size: 6 * N * 4, usage: S | D });
+      this.groupsBuf = device.createBuffer({ size: 257 * 32, usage: U | D });
+      this.snapBuf = device.createBuffer({ size: MAXSNAP * 3072 * 4, usage: S | C });
+      this.heatBuf = device.createBuffer({ size: N, usage: S | C });
+      this.paramsBuf = device.createBuffer({ size: KMAX * NSLOT * PSTRIDE, usage: U | D });
+      this.statsStage = device.createBuffer({ size: STATS_WORDS * 4, usage: MR | D });
+      this.snapStage = device.createBuffer({ size: MAXSNAP * 3072 * 4, usage: MR | D });
+      this.q.writeBuffer(this.slotIndexBuf, 0, new Int32Array(257 * 3 * 1024).fill(-1));
+      this.q.writeBuffer(this.congBuf, 2 * N * 16, new Float32Array(1024).fill(-1e9));
+      this.slotOf = new Map(); this.slotKey = new Int32Array(SLOTS).fill(-1); this.slotUsed = new Float64Array(SLOTS); this.cache = new Map();
+      this.free = []; for (let i = SLOTS - 1; i >= 0; i--) this.free.push(i);
+      this.clear = new Float32Array(N); this.wallBytes = new Uint8Array(N);
+      const module = device.createShaderModule({ code: WGSL });
+      this.module = module;
+      this.bgl1 = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }] });
+      this.bgl0 = {}; this.pipes = {};
+      for (const name of Object.keys(BINDINGS)) {
+        this.bgl0[name] = device.createBindGroupLayout({ entries: BINDINGS[name].map((b) => ({ binding: b, visibility: GPUShaderStage.COMPUTE, buffer: { type: TYPES[b] } })) });
+        this.pipes[name] = device.createComputePipeline({ layout: device.createPipelineLayout({ bindGroupLayouts: [this.bgl0[name], this.bgl1] }), compute: { module, entryPoint: name } });
+      }
+      this.pbg = [];
+      for (let i = 0; i < KMAX * NSLOT; i++) this.pbg.push(device.createBindGroup({ layout: this.bgl1, entries: [{ binding: 0, resource: { buffer: this.paramsBuf, offset: i * PSTRIDE, size: 112 } }] }));
+      this.reading = false; this.version = 0; this.infoBuf = null;
+    }
+
+    // ----------------------------------------------------------- capacity and bindings
+    ensureCap(M) {
+      if (M <= this.cap && this.agentsBuf) return;
+      const cap = Math.max(M, this.cap * 2, 16384), d = this.device;
+      const S = GPUBufferUsage.STORAGE, D = GPUBufferUsage.COPY_DST, C = GPUBufferUsage.COPY_SRC;
+      if (this.agentsBuf) { this.agentsBuf.destroy(); this.gridBuf.destroy(); this.tilesBuf.destroy(); }
+      this.agentsBuf = d.createBuffer({ size: cap * 32, usage: S | D | C });
+      this.gridBuf = d.createBuffer({ size: (OFF.bag + cap) * 4, usage: S | D | C });
+      this.touchCap = 2 * cap + 16384; // big agents queue several congestion tiles each
+      this.tilesBuf = d.createBuffer({ size: (N + this.touchCap) * 4, usage: S | D });
+      this.cap = cap;
+      this.rebind();
+    }
+    setInfo(buf) { if (buf !== this.infoBuf) { this.infoBuf = buf; this.rebind(); } }
+    rebind() {
+      if (!this.agentsBuf || !this.infoBuf) return;
+      const res = { 0: this.agentsBuf, 1: this.infoBuf, 2: this.gridBuf, 3: this.wallsBuf, 4: this.slotIndexBuf, 5: this.atlasBuf, 6: this.congBuf, 7: this.accBuf, 8: this.tilesBuf, 9: this.groupsBuf, 10: this.snapBuf, 11: this.heatBuf };
+      this.bg = {};
+      for (const name of Object.keys(BINDINGS)) this.bg[name] = this.device.createBindGroup({ layout: this.bgl0[name], entries: BINDINGS[name].map((b) => ({ binding: b, resource: { buffer: res[b] } })) });
+      this.version++;
+    }
+
+    // ----------------------------------------------------------- world data
+    // Wall bytes: bit 0 wall, bits 1-7 clearance in 1/32 tiles (lets big agents skip wall tests in the open).
+    packWalls(walls, x0, y0, x1, y1) {
+      const W = FF.W;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * W + x; this.wallBytes[i] = (walls[i] ? 1 : 0) | (Math.min(127, Math.round(this.clear[i] * 32)) << 1); }
+    }
+    setWalls(walls) {
+      FF.clearance(walls, this.clear, 0, 0, FF.W - 1, FF.H - 1, 3);
+      this.packWalls(walls, 0, 0, FF.W - 1, FF.H - 1);
+      this.q.writeBuffer(this.wallsBuf, 0, this.wallBytes);
+    }
+    editWalls(walls, x0, y0, x1, y1) {
+      const W = FF.W, ya = Math.max(0, y0 - 3), yb = Math.min(FF.H - 1, y1 + 3), xa = Math.max(0, x0 - 3) & ~3, xb = Math.min(W, ((x1 + 4) + 3) & ~3);
+      FF.clearance(walls, this.clear, x0 - 3, y0 - 3, x1 + 3, y1 + 3, 3);
+      this.packWalls(walls, xa, ya, xb - 1, yb);
+      for (let y = ya; y <= yb; y++) this.q.writeBuffer(this.wallsBuf, y * W + xa, this.wallBytes, y * W + xa, xb - xa);
+    }
+    setGroups(list) {
+      const d = new Float32Array(257 * 8);
+      for (const g of list) {
+        d.set([g.cx, g.cy, g.r, g.respawn ? 1 : 0], g.id * 8);
+        if (g.spawn) d.set([g.spawn.cx, g.spawn.cy, g.spawn.r, 0], g.id * 8 + 4);
+      }
+      this.q.writeBuffer(this.groupsBuf, 0, d);
+      const sig = new Map(list.map((g) => [g.id, g.cx + ',' + g.cy]));
+      this.groupSig = this.groupSig || new Map();
+      for (const [id, s] of Array.from(this.groupSig)) if (sig.get(id) !== s) this.dropGroup(id);
+      this.groupSig = sig;
+      this.wake();
+    }
+    dropGroup(id) {
+      this.q.writeBuffer(this.slotIndexBuf, id * 3 * 4096, new Int32Array(3 * 1024).fill(-1));
+      for (const [key, si] of Array.from(this.slotOf)) if (Math.floor(key / 3072) === id) { this.slotOf.delete(key); this.cache.delete(key); this.slotKey[si] = -1; this.free.push(si); }
+    }
+    dropAll() {
+      this.q.writeBuffer(this.slotIndexBuf, 0, new Int32Array(257 * 3 * 1024).fill(-1));
+      this.slotOf.clear(); this.cache.clear(); this.slotKey.fill(-1); this.free = []; for (let i = SLOTS - 1; i >= 0; i--) this.free.push(i);
+    }
+    wake() { this.wakeAll = this.tick; }
+    // Sector field for (group, size class, sector) into the atlas; least recently updated slot is evicted when full.
+    slot(g, c, s, fx, fy) {
+      const key = (g * 3 + c) * 1024 + s;
+      let si = this.slotOf.get(key);
+      if (si === undefined) {
+        if (this.free.length) si = this.free.pop();
+        else {
+          let best = 0; for (let i = 1; i < SLOTS; i++) if (this.slotUsed[i] < this.slotUsed[best]) best = i;
+          si = best; const old = this.slotKey[si];
+          if (old >= 0) { this.slotOf.delete(old); this.cache.delete(old); this.q.writeBuffer(this.slotIndexBuf, old * 4, new Int32Array([-1])); }
+        }
+        this.slotOf.set(key, si); this.slotKey[si] = key;
+        this.q.writeBuffer(this.slotIndexBuf, key * 4, new Int32Array([si]));
+      }
+      const packed = new Uint32Array(1024);
+      for (let i = 0; i < 1024; i++) packed[i] = toHalf(fx[i]) | (toHalf(fy[i]) << 16);
+      this.q.writeBuffer(this.atlasBuf, si * 4096, packed);
+      this.slotUsed[si] = performance.now();
+      this.cache.set(key, { fx, fy });
+    }
+    exportSlots() { const out = []; for (const [key, v] of this.cache) { const gc = Math.floor(key / 1024); out.push({ g: Math.floor(gc / 3), c: gc % 3, s: key % 1024, fx: v.fx, fy: v.fy }); } return out; }
+
+    // ----------------------------------------------------------- state in and out
+    upload(st) {
+      this.ensureCap(st.M);
+      this.M = st.M;
+      this.levelN = [0, 0, 0];
+      const ab = new ArrayBuffer(Math.max(32, st.M * 32)), f = new Float32Array(ab), u = new Uint32Array(ab);
+      for (let a = 0; a < st.M; a++) {
+        const o = a * 8, sz = st.sizes[a];
+        f[o] = st.pos[2 * a]; f[o + 1] = st.pos[2 * a + 1]; f[o + 2] = st.vel[2 * a]; f[o + 3] = st.vel[2 * a + 1];
+        f[o + 4] = st.stuck[a]; u[o + 5] = (st.flags[a] & 3) | (sz << 8); u[o + 6] = st.tryTick[a]; u[o + 7] = 0;
+        this.levelN[LEVEL_OF[sz]]++;
+      }
+      for (let k = 0; k < 3; k++) this.levelT[k] = Math.min(TMAX[k], Math.max(1024, 1 << Math.ceil(Math.log2(Math.max(1, this.levelN[k]) * 4))));
+      this.q.writeBuffer(this.agentsBuf, 0, ab);
+      this.tick = Math.max(1, st.tick); this.time = st.time; this.wakeAll = this.tick;
+      const enc = this.device.createCommandEncoder();
+      enc.clearBuffer(this.gridBuf, OFF.stamp * 4, N * 4);
+      enc.clearBuffer(this.tilesBuf, 0, N * 4);
+      enc.clearBuffer(this.gridBuf, OFF.arr * 4, 260 * 4);
+      if (st.resetCong || st.cong) enc.clearBuffer(this.accBuf);
+      this.q.submit([enc.finish()]);
+      if (st.cong) {
+        const c = st.cong, data = new Float32Array((2 * N + 256) * 4);
+        for (let i = 0; i < N; i++) {
+          const o = 8 * i, b = 4 * i;
+          data[o] = c.rho[i]; data[o + 1] = c.jam[i]; data[o + 2] = c.lastT[i];
+          data[o + 4] = c.F4[b]; data[o + 5] = c.F4[b + 1]; data[o + 6] = c.F4[b + 2]; data[o + 7] = c.F4[b + 3];
+        }
+        data.set(c.secActive, 8 * N);
+        this.q.writeBuffer(this.congBuf, 0, data);
+      } else if (st.resetCong) {
+        const e2 = this.device.createCommandEncoder(); e2.clearBuffer(this.congBuf, 0, 2 * N * 16); this.q.submit([e2.finish()]);
+        this.q.writeBuffer(this.congBuf, 2 * N * 16, new Float32Array(1024).fill(-1e9));
+      }
+      if (st.slots) for (const sl of st.slots) this.slot(sl.g, sl.c || 0, sl.s, sl.fx, sl.fy);
+    }
+    async readAgents() {
+      const M = this.M, size = Math.max(32, M * 32);
+      const stage = this.device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const enc = this.device.createCommandEncoder(); enc.copyBufferToBuffer(this.agentsBuf, 0, stage, 0, size); this.q.submit([enc.finish()]);
+      await stage.mapAsync(GPUMapMode.READ);
+      const ab = stage.getMappedRange().slice(0); stage.unmap(); stage.destroy();
+      return { M, ab };
+    }
+    async readPositions() {
+      const { M, ab } = await this.readAgents(), f = new Float32Array(ab), pos = new Float32Array(2 * M);
+      for (let a = 0; a < M; a++) { pos[2 * a] = f[8 * a]; pos[2 * a + 1] = f[8 * a + 1]; }
+      return pos;
+    }
+    async readState(withCong) {
+      const { M, ab } = await this.readAgents(), f = new Float32Array(ab), u = new Uint32Array(ab);
+      const st = { M, pos: new Float32Array(2 * M), vel: new Float32Array(2 * M), stuck: new Float32Array(M), flags: new Uint32Array(M), tryTick: new Uint32Array(M), time: this.time, tick: this.tick };
+      for (let a = 0; a < M; a++) {
+        const o = 8 * a;
+        st.pos[2 * a] = f[o]; st.pos[2 * a + 1] = f[o + 1]; st.vel[2 * a] = f[o + 2]; st.vel[2 * a + 1] = f[o + 3];
+        st.stuck[a] = f[o + 4]; st.flags[a] = u[o + 5] & 3; st.tryTick[a] = u[o + 6];
+      }
+      if (withCong) {
+        const size = (2 * N + 256) * 16, stage = this.device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+        const enc = this.device.createCommandEncoder(); enc.copyBufferToBuffer(this.congBuf, 0, stage, 0, size); this.q.submit([enc.finish()]);
+        await stage.mapAsync(GPUMapMode.READ);
+        const d = new Float32Array(stage.getMappedRange());
+        const c = { rho: new Float32Array(N), jam: new Float32Array(N), lastT: new Float32Array(N), F4: new Float32Array(4 * N), secActive: new Float32Array(1024) };
+        for (let i = 0; i < N; i++) {
+          const o = 8 * i, b = 4 * i;
+          c.rho[i] = d[o]; c.jam[i] = d[o + 1]; c.lastT[i] = d[o + 2];
+          c.F4[b] = d[o + 4]; c.F4[b + 1] = d[o + 5]; c.F4[b + 2] = d[o + 6]; c.F4[b + 3] = d[o + 7];
+        }
+        c.secActive.set(d.subarray(8 * N, 8 * N + 1024));
+        stage.unmap(); stage.destroy();
+        st.cong = c;
+      }
+      return st;
+    }
+
+    // ----------------------------------------------------------- per-frame encoding
+    substeps(speed) { return Math.max(1, Math.ceil(speed * P.dt / (SIZES[0] / 4) - 1e-9)); }
+    maxSteps(speed) { return Math.max(1, Math.floor(KMAX / this.substeps(speed))); }
+    writeParams(ns, dts, L) {
+      const n = Math.max(1, ns), ab = new ArrayBuffer(n * NSLOT * PSTRIDE), u = new Uint32Array(ab), f = new Float32Array(ab);
+      const [T0, T1, T2] = this.levelT, TT = T0 + T1 + T2;
+      for (let i = 0; i < n; i++) for (let sl = 0; sl < NSLOT; sl++) {
+        const o = (i * NSLOT + sl) * PWORDS, level = sl < 27 ? Math.floor(sl / 9) : 0, color = sl < 27 ? sl % 9 : 9;
+        u[o] = this.tick + 1 + i; u[o + 1] = color; u[o + 2] = this.wakeAll; u[o + 3] = 8; u[o + 4] = this.M; u[o + 5] = level; u[o + 6] = TT; u[o + 7] = this.seed;
+        f[o + 8] = this.time + i * dts; f[o + 9] = dts; f[o + 10] = L; u[o + 11] = TT / 1024;
+        u[o + 12] = T0; u[o + 13] = T1; u[o + 14] = T2; u[o + 15] = this.levelN[0]; u[o + 16] = this.levelN[1]; u[o + 17] = this.levelN[2];
+        u[o + 18] = OFF.start; u[o + 19] = OFF.stamp; u[o + 20] = OFF.block; u[o + 21] = OFF.ctr; u[o + 22] = OFF.arr; u[o + 23] = OFF.dem; u[o + 24] = OFF.snap; u[o + 25] = OFF.bag;
+        u[o + 26] = this.touchCap; u[o + 27] = 0;
+      }
+      this.q.writeBuffer(this.paramsBuf, 0, ab);
+    }
+    // Encode `steps` fixed steps; params slot 27 of the last substep serves any extra passes this frame.
+    encodeSteps(enc, steps, speed) {
+      const sub = this.substeps(speed), ns = steps * sub, dts = P.dt / sub, L = speed * P.dt / sub;
+      this.writeParams(ns, dts, L);
+      this.extraSlot = Math.max(0, ns - 1) * NSLOT + 27;
+      if (!ns) return 0;
+      const TT = this.levelT[0] + this.levelT[1] + this.levelT[2], blocks = TT / 1024;
+      const wgA = Math.ceil(this.M / 256), wgT = Math.ceil(this.touchCap / 256);
+      for (let i = 0; i < ns; i++) {
+        enc.clearBuffer(this.gridBuf, 0, TT * 4);
+        enc.clearBuffer(this.gridBuf, OFF.ctr * 4, 8);
+        if (!this.M) continue;
+        const pass = enc.beginComputePass();
+        const run = (name, slot, wg) => { pass.setPipeline(this.pipes[name]); pass.setBindGroup(0, this.bg[name]); pass.setBindGroup(1, this.pbg[i * NSLOT + slot]); pass.dispatchWorkgroups(wg); };
+        run('binPass', 27, wgA); run('scanA', 27, blocks); run('scanB', 27, 1); run('scanC', 27, blocks);
+        run('scatter', 27, wgA); run('applyCong', 27, wgT);
+        for (const level of [2, 1, 0]) { // biggest first; the other levels stay still while one moves
+          if (!this.levelN[level]) continue;
+          const wgB = this.levelT[level] / 64;
+          for (let c = 0; c < 9; c++) run('stepAgents', level * 9 + c, wgB);
+        }
+        run('respawnPass', 27, wgA);
+        pass.end();
+      }
+      this.tick += ns; this.time += ns * dts;
+      return ns;
+    }
+    encodeIdle(speed) { const sub = this.substeps(speed); this.writeParams(0, P.dt / sub, speed * P.dt / sub); this.extraSlot = 27; }
+    encodeDemand(enc) {
+      enc.clearBuffer(this.gridBuf, (OFF.ctr + 2) * 4, 8);
+      enc.clearBuffer(this.gridBuf, OFF.dem * 4, DEMW * 4);
+      const pass = enc.beginComputePass(), slot = this.pbg[this.extraSlot];
+      const run = (name, wg) => { pass.setPipeline(this.pipes[name]); pass.setBindGroup(0, this.bg[name]); pass.setBindGroup(1, slot); pass.dispatchWorkgroups(wg); };
+      if (this.M) run('demandPass', Math.ceil(this.M / 256));
+      run('secList', 4); run('packSnap', MAXSNAP * 1024 / 256);
+      pass.end();
+      enc.copyBufferToBuffer(this.gridBuf, OFF.ctr * 4, this.statsStage, 0, STATS_WORDS * 4);
+      enc.copyBufferToBuffer(this.snapBuf, 0, this.snapStage, 0, MAXSNAP * 3072 * 4);
+      this.reading = true;
+    }
+    encodeHeat(enc, heatTex) {
+      const pass = enc.beginComputePass();
+      pass.setPipeline(this.pipes.heatPass); pass.setBindGroup(0, this.bg.heatPass); pass.setBindGroup(1, this.pbg[this.extraSlot]); pass.dispatchWorkgroups(N / 4 / 256);
+      pass.end();
+      enc.copyBufferToTexture({ buffer: this.heatBuf, bytesPerRow: 1024 }, { texture: heatTex }, [1024, 1024]);
+    }
+    // After the submit that carried encodeDemand: counters, (group, class, sector) triples and a congestion snapshot.
+    async readStats() {
+      await Promise.all([this.statsStage.mapAsync(GPUMapMode.READ), this.snapStage.mapAsync(GPUMapMode.READ)]);
+      const w = new Uint32Array(this.statsStage.getMappedRange().slice(0));
+      const snap = new Uint16Array(this.snapStage.getMappedRange());
+      const res = { moved: w[1], settled: w[2], arrivals: w.slice(16, 16 + 257), time: this.time };
+      const triples = [], dem = 16 + 260;
+      for (let i = 0; i < DEMW; i++) { let v = w[dem + i]; while (v) { const b = 31 - Math.clz32(v); v &= ~(1 << b); const k = i * 32 + b, gc = k >> 10; triples.push(Math.floor(gc / 3), gc % 3, k & 1023); } }
+      const n = Math.min(w[3], MAXSNAP), secs = new Int32Array(n), data = new Float32Array(n * 6144);
+      for (let k = 0; k < n; k++) {
+        secs[k] = w[dem + DEMW + k];
+        const base = k * 6144;
+        for (let li = 0; li < 1024; li++) {
+          const h = base + li * 6, b4 = base + 2048 + 4 * li;
+          data[base + li] = HALF[snap[h]]; data[base + 1024 + li] = HALF[snap[h + 1]];
+          data[b4] = HALF[snap[h + 2]]; data[b4 + 1] = HALF[snap[h + 3]]; data[b4 + 2] = HALF[snap[h + 4]]; data[b4 + 3] = HALF[snap[h + 5]];
+        }
+      }
+      this.statsStage.unmap(); this.snapStage.unmap();
+      this.reading = false;
+      res.triples = Int32Array.from(triples); res.secs = secs; res.data = data; res.snapCount = w[3];
+      return res;
+    }
+  }
+  GpuSim.create = async function (device) {
+    device.pushErrorScope('validation');
+    device.pushErrorScope('out-of-memory');
+    const g = new GpuSim(device);
+    const oom = await device.popErrorScope(), val = await device.popErrorScope();
+    const info = await g.module.getCompilationInfo();
+    const errs = info.messages.filter((m) => m.type === 'error').map((m) => m.lineNum + ': ' + m.message);
+    if (errs.length || val || oom) throw new Error(errs[0] || (val && val.message) || (oom && oom.message));
+    return g;
+  };
+  GpuSim.OFF = OFF; GpuSim.WGSL = WGSL; GpuSim.LEVEL_OF = LEVEL_OF;
+  return GpuSim;
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = GpuSim;
+
+</script>
+<script>
+(async function () {
+  'use strict';
+  const { W, H, N, NSX } = FF;
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => Math.round(n).toLocaleString('en-US');
+  const GROUP_COLORS = ['#d1495b', '#2e86ab', '#3c9d5d', '#8e5cb5', '#e08e0b', '#1b998b', '#c0627a', '#4f6d7a', '#b5651d', '#5d8233', '#7f6ae0', '#c44536'];
+  const FIXED_SCENES = { corridor: 800, circle8: 2000 };
+  const SIZE_R = FF.SIZES;
+
+  const S = {
+    tool: 'select', brush: 4, scene: 'mixed', count: 10000, paused: false,
+    arrows: true, heat: false, grid: true, focus: 0, groups: [],
+    M: 0, pos: null, gids: new Uint16Array(0), layoutVersion: -1, sel: new Int32Array(0), selFlag: new Uint8Array(0),
+    cam: { cx: 512, cy: 512, zoom: 2 }, dpr: 1, walls: new Uint8Array(N), mips: null, edits: new Map(),
+    awaiting: false, ready: false, lastTick: 0, lastFrame: 0, spare: [], infoDirty: true,
+    st: { fps: 60, sim: 0, field: '', moving: 0, settled: 0, arrivals: 0, groups: 0, workers: '', upkeep: 0, moves: 0, checks: 0, visits: 0 },
+    speed: 2.5, frameNo: 0, structure: 'grid', spawnSize: -1, fieldClass: 0, sizes: new Uint8Array(0),
+    backend: 'cpu', switching: false, gacc: 0, nextDemand: 0, gpuMs: 0, gpuStepMs: 1, lastSteps: 0, arrHist: [], gpuFast: false,
+  };
+  let gpu = null; // GpuSim, created on the first switch to the GPU back end
+
+  function noGpu(text) { $('nogpu').style.display = 'grid'; if (text) $('nogpuText').textContent = text; }
+  let toastTimer = 0;
+  function toast(text) { const t = $('toast'); t.textContent = text; t.style.display = 'block'; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.display = 'none'; }, 3500); }
+
+  // ------------------------------------------------------------------ WebGPU
+  if (!navigator.gpu) { noGpu('This browser does not expose WebGPU. Open the lab in a recent desktop version of Chrome or Edge.'); return; }
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) { noGpu('No WebGPU adapter is available on this device.'); return; }
+  const device = await adapter.requestDevice();
+  window.__flowFieldGpu = { gpu: navigator.gpu, adapter, device }; // keep the instance alive: dropping it loses the device
+  device.lost.then((info) => { console.error('device lost at', performance.now().toFixed(0), info.reason, info.message); noGpu('The GPU device was lost (' + (info.message || 'unknown reason') + '). Reload the page to continue.'); });
+  device.addEventListener('uncapturederror', (e) => console.error('GPU error at', performance.now().toFixed(0), e.error.message));
+  const canvas = $('gpu'), ctx = canvas.getContext('webgpu'), format = navigator.gpu.getPreferredCanvasFormat();
+  ctx.configure({ device, format, alphaMode: 'opaque' });
+
+  const TB = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
+  const wallTex = device.createTexture({ size: [W, H], format: 'r8unorm', mipLevelCount: 11, usage: TB });
+  const heatTex = device.createTexture({ size: [W, H], format: 'r8unorm', usage: TB });
+  const angleTex = device.createTexture({ size: [W, H], format: 'r8uint', usage: TB });
+  const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' });
+  const camBuf = device.createBuffer({ size: 192, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const camData = new Float32Array(48);
+
+  const CAM_WGSL = `struct Cam { centre: vec2f, viewport: vec2f, zoom: f32, dpr: f32, flags: vec2f,
+    water: vec4f, land: vec4f, grid: vec4f, sector: vec4f, heat: vec4f, arrowH: vec4f, arrowV: vec4f, outside: vec4f, edge: vec4f, sel: vec4f, };
+    @group(0) @binding(0) var<uniform> cam: Cam;
+    fn toClip(screen: vec2f) -> vec4f { return vec4f(screen.x / cam.viewport.x * 2.0 - 1.0, 1.0 - screen.y / cam.viewport.y * 2.0, 0.0, 1.0); }`;
+  const QUAD = `var corners = array<vec2f, 6>(vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0), vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0));`;
+
+  const MAP_WGSL = CAM_WGSL + `
+    @group(0) @binding(1) var wallTex: texture_2d<f32>;
+    @group(0) @binding(2) var heatTex: texture_2d<f32>;
+    @group(0) @binding(3) var angleTex: texture_2d<u32>;
+    @group(0) @binding(4) var samp: sampler;
+    @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+      var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+      return vec4f(p[i], 0.0, 1.0);
+    }
+    fn sdSegment(p: vec2f, a: vec2f, b: vec2f) -> f32 { let pa = p - a; let ba = b - a; let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
+    fn sdTriangle(p: vec2f, p0: vec2f, p1: vec2f, p2: vec2f) -> f32 {
+      let e0 = p1 - p0; let e1 = p2 - p1; let e2 = p0 - p2;
+      let v0 = p - p0; let v1 = p - p1; let v2 = p - p2;
+      let q0 = v0 - e0 * clamp(dot(v0, e0) / dot(e0, e0), 0.0, 1.0);
+      let q1 = v1 - e1 * clamp(dot(v1, e1) / dot(e1, e1), 0.0, 1.0);
+      let q2 = v2 - e2 * clamp(dot(v2, e2) / dot(e2, e2), 0.0, 1.0);
+      let s = sign(e0.x * e2.y - e0.y * e2.x);
+      let d = min(min(vec2f(dot(q0, q0), s * (v0.x * e0.y - v0.y * e0.x)), vec2f(dot(q1, q1), s * (v1.x * e1.y - v1.y * e1.x))), vec2f(dot(q2, q2), s * (v2.x * e2.y - v2.y * e2.x)));
+      return -sqrt(d.x) * sign(d.y);
+    }
+    fn wallAt(t: vec2i) -> f32 { if (t.x < 0 || t.y < 0 || t.x >= 1024 || t.y >= 1024) { return 1.0; } return textureLoad(wallTex, t, 0).r; }
+    @fragment fn fs(@builtin(position) frag: vec4f) -> @location(0) vec4f {
+      let world = cam.centre + (frag.xy - 0.5 * cam.viewport) / cam.zoom;
+      if (world.x < 0.0 || world.y < 0.0 || world.x >= 1024.0 || world.y >= 1024.0) { return vec4f(cam.outside.rgb, 1.0); }
+      let tile = vec2i(floor(world));
+      let lp = fract(world) - 0.5;
+      let z = cam.zoom / cam.dpr;
+      var wallV = textureLoad(wallTex, tile, 0).r;
+      if (cam.zoom < 1.0) { wallV = textureSampleLevel(wallTex, samp, world / 1024.0, log2(1.0 / cam.zoom)).r; }
+      var col = mix(cam.water.rgb, cam.land.rgb, wallV);
+      if (cam.flags.y > 0.5) { col = mix(col, cam.heat.rgb, 0.7 * textureLoad(heatTex, tile, 0).r * (1.0 - wallV)); }
+      if (wallV > 0.5 && z >= 3.0) {
+        let lo = (lp + 0.5) * cam.zoom; let hi = (0.5 - lp) * cam.zoom;
+        var e = 1e9;
+        if (wallAt(tile + vec2i(-1, 0)) < 0.5) { e = min(e, lo.x); }
+        if (wallAt(tile + vec2i(1, 0)) < 0.5) { e = min(e, hi.x); }
+        if (wallAt(tile + vec2i(0, -1)) < 0.5) { e = min(e, lo.y); }
+        if (wallAt(tile + vec2i(0, 1)) < 0.5) { e = min(e, hi.y); }
+        col = mix(col, cam.edge.rgb, 1.0 - smoothstep(0.0, 1.2 * cam.dpr, e));
+      }
+      let edgePx = (0.5 - max(abs(lp.x), abs(lp.y))) * cam.zoom;
+      col = mix(col, cam.grid.rgb, (1.0 - smoothstep(0.0, cam.dpr, edgePx)) * smoothstep(4.0, 8.0, z) * cam.grid.a);
+      let sl = abs(fract(world / 32.0 + 0.5) - 0.5) * 32.0 * cam.zoom;
+      col = mix(col, cam.sector.rgb, (1.0 - smoothstep(0.0, cam.dpr, min(sl.x, sl.y))) * cam.sector.a);
+      if (cam.flags.x > 0.5 && z >= 6.0 && wallV < 0.5) {
+        let a = textureLoad(angleTex, tile, 0).r;
+        if (a != 255u) {
+          let t = f32(a) * (6.2831853 / 255.0);
+          let c = cos(t); let s = sin(t);
+          let p = vec2f(c * lp.x + s * lp.y, -s * lp.x + c * lp.y);
+          let d = min(sdSegment(p, vec2f(-0.30, 0.0), vec2f(0.20, 0.0)) - 0.03, sdTriangle(p, vec2f(0.38, 0.0), vec2f(0.16, 0.12), vec2f(0.16, -0.12))) * cam.zoom;
+          let cover = clamp(0.5 - d, 0.0, 1.0) * smoothstep(6.0, 12.0, z);
+          col = mix(col, select(cam.arrowV.rgb, cam.arrowH.rgb, abs(c) >= abs(s)), cover);
+        }
+      }
+      return vec4f(col, 1.0);
+    }`;
+
+  const AGENT_WGSL = CAM_WGSL + `
+    @group(0) @binding(1) var<storage, read> pos: array<vec2f>;
+    @group(0) @binding(2) var<storage, read> info: array<u32>;
+    @group(0) @binding(3) var<storage, read> palette: array<vec4f>;
+    struct VOut { @builtin(position) p: vec4f, @location(0) uv: vec2f, @location(1) col: vec3f, @location(2) sel: f32, @location(3) size: f32 };
+    @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
+      ${QUAD}
+      let corner = corners[vi];
+      let w = pos[ii]; let inf = info[ii]; let g = inf & 0xffffu; let sel = f32((inf >> 16u) & 1u);
+      var radii = array<f32, 5>(${SIZE_R.map((r) => r.toFixed(2)).join(', ')});
+      let rad = radii[min((inf >> 17u) & 7u, 4u)];
+      let size = max(2.0 * rad * cam.zoom, 1.6 * cam.dpr) + sel * 3.0 * cam.dpr + 1.0;
+      var o: VOut;
+      o.p = toClip((w - cam.centre) * cam.zoom + 0.5 * cam.viewport + corner * 0.5 * size);
+      o.uv = corner; o.col = palette[g].rgb; o.sel = sel; o.size = size;
+      return o;
+    }
+    @fragment fn fs(v: VOut) -> @location(0) vec4f {
+      let r = length(v.uv) * 0.5 * v.size;
+      let R = 0.5 * v.size - 0.5;
+      let a = clamp(R - r + 0.5, 0.0, 1.0);
+      if (a <= 0.0) { discard; }
+      var c = v.col;
+      if (v.sel > 0.5 && r > R - 1.5 * cam.dpr) { c = cam.sel.rgb; }
+      return vec4f(c, a);
+    }`;
+
+  const RING_WGSL = CAM_WGSL + `
+    @group(0) @binding(1) var<storage, read> rings: array<vec4f>;
+    @group(0) @binding(2) var<storage, read> palette: array<vec4f>;
+    struct VOut { @builtin(position) p: vec4f, @location(0) off: vec2f, @location(1) col: vec3f, @location(2) rad: f32, @location(3) dashed: f32 };
+    @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
+      ${QUAD}
+      let corner = corners[vi];
+      let rg = rings[ii]; let style = u32(rg.w); let ci = style % 1000u;
+      let ext = rg.z + 3.0 * cam.dpr / cam.zoom;
+      var o: VOut;
+      o.p = toClip((rg.xy + corner * ext - cam.centre) * cam.zoom + 0.5 * cam.viewport);
+      o.off = corner * ext; o.col = palette[ci].rgb; o.rad = rg.z; o.dashed = select(0.0, 1.0, style >= 1000u);
+      return o;
+    }
+    @fragment fn fs(v: VOut) -> @location(0) vec4f {
+      let d = length(v.off);
+      var a = 1.0 - smoothstep(0.75 * cam.dpr, 1.75 * cam.dpr, abs(d - v.rad) * cam.zoom);
+      if (v.dashed > 0.5) { a = a * step(0.5, fract(atan2(v.off.y, v.off.x) / 6.2831853 * 24.0)); }
+      let fill = select(0.0, 0.08, d < v.rad && v.dashed < 0.5);
+      let alpha = max(a, fill);
+      if (alpha <= 0.0) { discard; }
+      return vec4f(v.col, alpha);
+    }`;
+
+  const blend = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' } };
+  const pipe = (code, blended) => {
+    const module = device.createShaderModule({ code });
+    return device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' }, fragment: { module, entryPoint: 'fs', targets: [blended ? { format, blend } : { format }] }, primitive: { topology: 'triangle-list' } });
+  };
+  const AGENT_GPU_WGSL = AGENT_WGSL
+    .replace('@group(0) @binding(1) var<storage, read> pos: array<vec2f>;', 'struct Agent { pos: vec2f, vel: vec2f, stuck: f32, flags: u32, tryTick: u32, bucket: u32 };\n    @group(0) @binding(1) var<storage, read> agents: array<Agent>;')
+    .replace('let w = pos[ii];', 'let w = agents[ii].pos;');
+  if (AGENT_GPU_WGSL.indexOf('agents[ii].pos') < 0) throw new Error('GPU agent shader patch failed');
+  const mapPipe = pipe(MAP_WGSL, false), agentPipe = pipe(AGENT_WGSL, true), ringPipe = pipe(RING_WGSL, true), agentGpuPipe = pipe(AGENT_GPU_WGSL, true);
+  let agentGpuBG = null, agentGpuKey = '';
+  function gpuAgentBG() {
+    const key = gpu.version + ':' + agentCap;
+    if (key !== agentGpuKey) {
+      agentGpuBG = device.createBindGroup({ layout: agentGpuPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: camBuf } }, { binding: 1, resource: { buffer: gpu.agentsBuf } }, { binding: 2, resource: { buffer: infoBuf } }, { binding: 3, resource: { buffer: paletteBuf } }] });
+      agentGpuKey = key;
+    }
+    return agentGpuBG;
+  }
+  const mapBG = device.createBindGroup({ layout: mapPipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: camBuf } }, { binding: 1, resource: wallTex.createView() },
+    { binding: 2, resource: heatTex.createView() }, { binding: 3, resource: angleTex.createView() }, { binding: 4, resource: sampler }] });
+
+  const SB = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+  const paletteBuf = device.createBuffer({ size: 257 * 16, usage: SB });
+  const ringBuf = device.createBuffer({ size: 1024 * 16, usage: SB });
+  const ringBG = device.createBindGroup({ layout: ringPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: camBuf } }, { binding: 1, resource: { buffer: ringBuf } }, { binding: 2, resource: { buffer: paletteBuf } }] });
+  let ringCount = 0, agentCap = 0, posBuf = null, infoBuf = null, agentBG = null;
+  function ensureAgentCap(M) {
+    if (M <= agentCap) return;
+    agentCap = Math.max(M, agentCap * 2, 16384);
+    if (posBuf) { posBuf.destroy(); infoBuf.destroy(); }
+    posBuf = device.createBuffer({ size: agentCap * 8, usage: SB });
+    infoBuf = device.createBuffer({ size: agentCap * 4, usage: SB });
+    agentBG = device.createBindGroup({ layout: agentPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: camBuf } }, { binding: 1, resource: { buffer: posBuf } }, { binding: 2, resource: { buffer: infoBuf } }, { binding: 3, resource: { buffer: paletteBuf } }] });
+    S.infoDirty = true;
+    if (gpu) gpu.setInfo(infoBuf);
+  }
+  ensureAgentCap(16384);
+
+  // ------------------------------------------------------------------ theme
+  const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const rgb = (css) => { probe.fillStyle = '#000'; probe.fillStyle = css; probe.fillRect(0, 0, 1, 1); const d = probe.getImageData(0, 0, 1, 1).data; return [d[0] / 255, d[1] / 255, d[2] / 255]; };
+  let theme = {};
+  function readTheme() {
+    const cs = getComputedStyle(document.documentElement), v = (n) => cs.getPropertyValue(n).trim();
+    theme = { water: rgb(v('--water')), land: rgb(v('--land')), grid: rgb(v('--water-line')), sector: rgb(v('--sector')), heat: rgb(v('--magenta')),
+      arrowH: rgb(v('--vec-h')), arrowV: rgb(v('--vec-v')), outside: rgb(v('--outside')), edge: rgb(v('--land-edge')), sel: rgb(v('--sel')), idle: rgb(v('--idle')) };
+    const pal = new Float32Array(257 * 4);
+    for (let g = 0; g <= 256; g++) { const c = g === 0 ? theme.idle : rgb(GROUP_COLORS[(g - 1) % GROUP_COLORS.length]); pal.set([c[0], c[1], c[2], 1], g * 4); }
+    device.queue.writeBuffer(paletteBuf, 0, pal);
+  }
+  readTheme();
+  if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTheme);
+  new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+
+  // ------------------------------------------------------------------ textures
+  function buildMips(l0) {
+    const levels = [l0]; let w = W;
+    while (w > 1) {
+      const prev = levels[levels.length - 1], nw = w >> 1, next = new Uint8Array(nw * nw);
+      for (let y = 0; y < nw; y++) for (let x = 0; x < nw; x++) { const i = 2 * y * w + 2 * x; next[y * nw + x] = (prev[i] + prev[i + 1] + prev[i + w] + prev[i + w + 1] + 2) >> 2; }
+      levels.push(next); w = nw;
+    }
+    return levels;
+  }
+  function uploadWallsAll() {
+    const l0 = new Uint8Array(N); for (let i = 0; i < N; i++) l0[i] = S.walls[i] ? 255 : 0;
+    S.mips = buildMips(l0);
+    S.mips.forEach((lv, m) => { const w = W >> m; device.queue.writeTexture({ texture: wallTex, mipLevel: m }, lv, { bytesPerRow: w }, [w, w]); });
+  }
+  function uploadWallsRect(x0, y0, x1, y1) {
+    const L = S.mips;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) L[0][y * W + x] = S.walls[y * W + x] ? 255 : 0;
+    device.queue.writeTexture({ texture: wallTex, mipLevel: 0, origin: [x0, y0] }, L[0], { offset: y0 * W + x0, bytesPerRow: W }, [x1 - x0 + 1, y1 - y0 + 1]);
+    for (let m = 1; m < L.length; m++) {
+      const w = W >> m, pw = w * 2, prev = L[m - 1], cur = L[m];
+      const rx0 = x0 >> m, ry0 = y0 >> m, rx1 = x1 >> m, ry1 = y1 >> m;
+      for (let y = ry0; y <= ry1; y++) for (let x = rx0; x <= rx1; x++) { const i = 2 * y * pw + 2 * x; cur[y * w + x] = (prev[i] + prev[i + 1] + prev[i + pw] + prev[i + pw + 1] + 2) >> 2; }
+      device.queue.writeTexture({ texture: wallTex, mipLevel: m, origin: [rx0, ry0] }, cur, { offset: ry0 * w + rx0, bytesPerRow: w }, [rx1 - rx0 + 1, ry1 - ry0 + 1]);
+    }
+  }
+  const zeros = new Uint8Array(N), blanks = new Uint8Array(N).fill(255);
+  const clearHeat = () => device.queue.writeTexture({ texture: heatTex }, zeros, { bytesPerRow: W }, [W, H]);
+  const clearAngles = () => device.queue.writeTexture({ texture: angleTex }, blanks, { bytesPerRow: W }, [W, H]);
+  const writeSector = (tex, s, data, offset) => device.queue.writeTexture({ texture: tex, origin: [(s % NSX) * 32, Math.floor(s / NSX) * 32] }, data, { offset, bytesPerRow: 32 }, [32, 32]);
+  clearHeat(); clearAngles();
+
+  // ------------------------------------------------------------------ workers (Blob URLs; in-process fallback)
+  const srcShared = $('src-shared').textContent, srcField = $('src-field').textContent, srcSim = $('src-sim').textContent;
+  const boot = (cls, loop) => `;(function () {
+    const core = new ${cls}(); let peer = null;
+    core.post = (m, t) => postMessage(m, t || []);
+    core.postPeer = (m, t) => { if (peer) peer.postMessage(m, t || []); };
+    onmessage = (e) => { const m = e.data; if (m && m.type === 'port') { peer = m.port; peer.onmessage = (ev) => core.handle(ev.data); return; } core.handle(m); };
+    ${loop ? 'const loop = () => { const n = core.work(6); setTimeout(loop, n ? 0 : 8); }; loop();' : ''}
+    postMessage({ type: 'hello' });
+  })();`;
+  let sendSim, sendField, mode = 'workers';
+  async function startWorkers() {
+    let simW, fieldW;
+    try {
+      const mk = (src) => new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      simW = mk(srcShared + '\n' + srcSim + boot('SimCore', false));
+      fieldW = mk(srcShared + '\n' + srcField + boot('FieldHost', true));
+    } catch (e) { return false; }
+    const hello = (w) => new Promise((res) => {
+      const t = setTimeout(() => res(false), 5000);
+      w.addEventListener('message', function h(e) { if (e.data && e.data.type === 'hello') { clearTimeout(t); w.removeEventListener('message', h); res(true); } });
+      w.addEventListener('error', () => { clearTimeout(t); res(false); });
+    });
+    const ok = (await Promise.all([hello(simW), hello(fieldW)])).every(Boolean);
+    if (!ok) { simW.terminate(); fieldW.terminate(); return false; }
+    const ch = new MessageChannel();
+    simW.postMessage({ type: 'port', port: ch.port1 }, [ch.port1]);
+    fieldW.postMessage({ type: 'port', port: ch.port2 }, [ch.port2]);
+    simW.onmessage = (e) => onSim(e.data); fieldW.onmessage = (e) => onField(e.data);
+    sendSim = (m, t) => simW.postMessage(m, t || []); sendField = (m, t) => fieldW.postMessage(m, t || []);
+    return true;
+  }
+  function startInProcess() {
+    mode = 'main thread';
+    const sim = new SimCore(), field = new FieldHost(), later = (f) => setTimeout(f, 0);
+    sim.post = (m) => later(() => onSim(m)); sim.postPeer = (m) => later(() => field.handle(m));
+    field.post = (m) => later(() => onField(m)); field.postPeer = (m) => later(() => sim.handle(m));
+    sendSim = (m) => later(() => sim.handle(m)); sendField = (m) => later(() => field.handle(m));
+    setInterval(() => field.work(3), 16);
+    toast('Workers are blocked here, so the simulation runs on the main thread.');
+  }
+
+  // ------------------------------------------------------------------ messages
+  const waiters = {};
+  const waitFor = (type) => new Promise((res) => { (waiters[type] = waiters[type] || []).push(res); });
+  function onSim(m) {
+    if (waiters[m.type] && waiters[m.type].length) { waiters[m.type].shift()(m); return; }
+    switch (m.type) {
+      case 'state': if (S.backend === 'gpu' && gpu) applyGpuState(m); break;
+      case 'gids':
+        S.gids = m.gids;
+        if (m.layoutVersion !== S.layoutVersion) { S.layoutVersion = m.layoutVersion; clearSelection(); }
+        S.infoDirty = true; if (gpu && S.backend === 'gpu') gpu.wake();
+        break;
+      case 'walls':
+        S.walls = m.walls; uploadWallsAll(); clearHeat(); clearAngles();
+        if (gpu && S.backend === 'gpu') { gpu.setWalls(S.walls); gpu.dropAll(); }
+        S.scene = m.scene; clearSelection();
+        if (m.camera) { S.cam.cx = m.camera.cx; S.cam.cy = m.camera.cy; S.cam.zoom = clampZoom(Math.min(canvas.width, canvas.height) / (2 * m.camera.extent)); }
+        document.querySelectorAll('[data-scene]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.scene === S.scene)));
+        S.focus = -1; if (S.backend === 'cpu') S.ready = true; // the GPU back end waits for the scene's agents
+        break;
+      case 'groups': S.groups = m.list; updateRings(); updateFocusList(); if (gpu && S.backend === 'gpu') gpu.setGroups(m.list); break;
+      case 'frame': onFrame(m); break;
+      case 'heat': for (let i = 0; i < m.secs.length; i++) writeSector(heatTex, m.secs[i], m.data, i * 1024); break;
+      case 'ordered': setFocus(m.g); break;
+      case 'notice': toast(m.text); break;
+    }
+  }
+  function onField(m) {
+    switch (m.type) {
+      case 'angles': if (m.g === S.focus && (m.c || 0) === S.fieldClass) writeSector(angleTex, m.s, m.data, 0); break;
+      case 'anglesClear': clearAngles(); break;
+      case 'fieldStats': S.st.field = `${fmt(m.jobsPerSec)}/s, ${m.msPerJob.toFixed(2)} ms each`; break;
+      case 'fieldReady': S.st.fieldReady = m.ms; break;
+      case 'slot': if (gpu && S.backend === 'gpu') gpu.slot(m.g, m.c || 0, m.s, m.fx, m.fy); break;
+    }
+  }
+  // Agents arriving from the simulation worker for the GPU back end (scene load, spawn, cull, switch).
+  function applyGpuState(st) {
+    ensureAgentCap(st.M);
+    S.M = st.M; S.gids = st.gids; S.sizes = st.sizes;
+    if (st.layoutVersion !== S.layoutVersion) { S.layoutVersion = st.layoutVersion; clearSelection(); }
+    rebuildInfo(); gpu.setInfo(infoBuf);
+    gpu.upload(st);
+    S.arrHist = []; S.nextDemand = gpu.time; S.gacc = 0;
+    S.ready = true; S.switching = false;
+  }
+  function onGpuStats(r) {
+    if (S.backend !== 'gpu') return;
+    sendField({ type: 'demand', triples: r.triples, secs: r.secs, data: r.data }, [r.triples.buffer, r.secs.buffer, r.data.buffer]);
+    S.st.moving = gpu.M ? r.moved / gpu.M : 0; S.st.settled = r.settled; S.st.groups = S.groups.length;
+    const rg = S.groups.filter((g) => g.respawn); let total = 0;
+    for (const g of rg) total += r.arrivals[g.id];
+    S.arrHist.push([r.time, total]);
+    while (S.arrHist.length > 2 && r.time - S.arrHist[1][0] >= 30) S.arrHist.shift();
+    const h0 = S.arrHist[0];
+    S.st.arrivals = rg.length && r.time > h0[0] + 1 ? (total - h0[1]) / (r.time - h0[0]) / rg.length : 0;
+  }
+
+  // ------------------------------------------------------------------ back ends
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function updateBackendUI() {
+    document.querySelectorAll('[data-backend]').forEach((b) => { b.setAttribute('aria-pressed', String(b.dataset.backend === S.backend)); b.disabled = S.switching; });
+    document.querySelectorAll('[data-structure]').forEach((b) => { b.disabled = S.backend === 'gpu'; });
+    $('backendNote').textContent = S.backend === 'gpu'
+      ? 'Agents step in GPU compute on hashed grids, one per size level; levels move in turn, biggest first, each in nine coloured passes. The neighbour-search toggle applies to the CPU.'
+      : 'Agents step on the CPU in a worker, with the neighbour search chosen below.';
+  }
+  async function setBackend(to) {
+    if (to === S.backend || S.switching || !S.ready) return;
+    S.switching = true; updateBackendUI();
+    try {
+      if (to === 'gpu') {
+        if (!gpu) { gpu = await GpuSim.create(device); window.__lab3gpu = gpu; }
+        while (S.awaiting) await sleep(5);
+        const reply = waitFor('state');
+        sendSim({ type: 'export' });
+        const st = await reply;
+        gpu.setInfo(infoBuf); gpu.setWalls(S.walls); gpu.setGroups(S.groups);
+        sendField({ type: 'route', to: 'main' });
+        S.backend = 'gpu';
+        applyGpuState(st);
+      } else {
+        await device.queue.onSubmittedWorkDone();
+        while (gpu.reading) await sleep(5);
+        const st = await gpu.readState(true);
+        st.slots = gpu.exportSlots();
+        sendField({ type: 'route', to: 'sim' });
+        sendSim({ type: 'import', state: st, mode: 'cpu' }, [st.pos.buffer, st.vel.buffer, st.stuck.buffer, st.flags.buffer, st.tryTick.buffer, st.cong.rho.buffer, st.cong.jam.buffer, st.cong.F4.buffer, st.cong.lastT.buffer, st.cong.secActive.buffer]);
+        S.backend = 'cpu'; S.awaiting = false; S.lastTick = 0; S.switching = false;
+      }
+      toast(S.backend === 'gpu' ? 'Agents now step in GPU compute.' : 'Agents now step on the CPU.');
+    } catch (err) {
+      console.error(err); S.switching = false; toast('Switching back ends failed: ' + err.message);
+    }
+    updateBackendUI();
+  }
+  // Operations that change the agent set while the GPU back end runs make a round trip through the worker.
+  async function gpuRoundTrip(msg) {
+    if (S.switching || !gpu) return;
+    S.switching = true;
+    await device.queue.onSubmittedWorkDone();
+    while (gpu.reading) await sleep(5);
+    const st = await gpu.readState(false);
+    sendSim({ type: 'import', state: st, mode: 'gpu' }, [st.pos.buffer, st.vel.buffer, st.stuck.buffer, st.flags.buffer, st.tryTick.buffer]);
+    sendSim(msg); // answered with 'state', applied by applyGpuState
+  }
+  function onFrame(m) {
+    if (S.pos) S.spare.push(S.pos);
+    S.pos = m.pos; S.M = m.M;
+    if (m.gids) {
+      S.gids = m.gids; if (m.sizes) S.sizes = m.sizes;
+      if (m.layoutVersion !== S.layoutVersion) { S.layoutVersion = m.layoutVersion; clearSelection(); }
+      S.infoDirty = true;
+    }
+    ensureAgentCap(S.M);
+    if (S.M) device.queue.writeBuffer(posBuf, 0, S.pos.buffer, S.pos.byteOffset, S.M * 8);
+    if (S.infoDirty) rebuildInfo();
+    S.st.upkeep = m.upkeepMs; S.st.moves = m.moveMs; S.st.checks = m.checks; S.st.visits = m.visits;
+    S.st.sim = m.simMs; S.st.moving = m.moving; S.st.settled = m.settled; S.st.arrivals = m.arrivals; S.st.groups = m.groups;
+    S.awaiting = false;
+  }
+  function rebuildInfo() {
+    const M = S.M, info = new Uint32Array(Math.max(1, M)), g = S.gids, f = S.selFlag;
+    const sz = S.sizes;
+    for (let a = 0; a < M; a++) info[a] = (a < g.length ? g[a] : 0) | ((a < f.length && f[a]) ? 0x10000 : 0) | ((a < sz.length ? sz[a] : 0) << 17);
+    device.queue.writeBuffer(infoBuf, 0, info);
+    S.infoDirty = false;
+  }
+  function updateRings() {
+    const data = new Float32Array(1024 * 4); let n = 0;
+    for (const g of S.groups) {
+      if (n >= 1023) break;
+      data.set([g.cx, g.cy, g.r, g.id], n * 4); n++;
+      if (g.spawn) { data.set([g.spawn.cx, g.spawn.cy, g.spawn.r, 1000 + g.id], n * 4); n++; }
+    }
+    device.queue.writeBuffer(ringBuf, 0, data, 0, Math.max(4, n * 4));
+    ringCount = n;
+  }
+  function updateFocusList() {
+    const sel = $('focus'); sel.textContent = '';
+    for (const g of S.groups) { const o = document.createElement('option'); o.value = String(g.id); o.textContent = `Group ${g.id} (${fmt(g.count)} agents)`; sel.appendChild(o); }
+    if (!S.groups.length) { const o = document.createElement('option'); o.value = '0'; o.textContent = 'No groups yet'; sel.appendChild(o); }
+    if (!S.groups.some((g) => g.id === S.focus)) setFocus(S.groups.length ? S.groups[0].id : 0);
+    else sel.value = String(S.focus);
+  }
+  function setFocus(g) { S.focus = g; $('focus').value = String(g); clearAngles(); sendField({ type: 'focus', g, c: S.fieldClass }); }
+
+  // ------------------------------------------------------------------ selection, orders, painting
+  function clearSelection() { S.sel = new Int32Array(0); S.selFlag = new Uint8Array(0); S.infoDirty = true; }
+  function selectRect(x0, y0, x1, y1, add) {
+    const M = S.M, p = S.pos; if (!p) return;
+    const flag = add && S.selFlag.length === M ? S.selFlag : new Uint8Array(M);
+    for (let a = 0; a < M; a++) { const x = p[2 * a], y = p[2 * a + 1]; if (x >= x0 && x <= x1 && y >= y0 && y <= y1) flag[a] = 1; }
+    let n = 0; for (let a = 0; a < M; a++) if (flag[a]) n++;
+    const idx = new Int32Array(n); n = 0; for (let a = 0; a < M; a++) if (flag[a]) idx[n++] = a;
+    S.selFlag = flag; S.sel = idx; S.infoDirty = true;
+  }
+  function order(x, y) {
+    if (!S.sel.length) return;
+    const idx = S.sel.slice();
+    sendSim({ type: 'order', idx, cx: x, cy: y }, [idx.buffer]);
+  }
+  function paint(tx, ty, value) {
+    const b = S.brush, lo = -((b - 1) >> 1), hi = b >> 1;
+    for (let dy = lo; dy <= hi; dy++) for (let dx = lo; dx <= hi; dx++) {
+      const x = tx + dx, y = ty + dy; if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      const i = y * W + x; if (S.walls[i] === value) continue;
+      S.walls[i] = value; S.edits.set(i, value);
+    }
+  }
+  function paintLine(x0, y0, x1, y1, value) {
+    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let err = dx + dy;
+    for (;;) { paint(x0, y0, value); if (x0 === x1 && y0 === y1) break; const e2 = 2 * err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } }
+  }
+  function flushEdits() {
+    if (!S.edits.size) return;
+    const tiles = new Int32Array(S.edits.size), values = new Uint8Array(S.edits.size);
+    let i = 0, x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (const [t, v] of S.edits) { tiles[i] = t; values[i] = v; i++; const x = t % W, y = (t / W) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    S.edits.clear();
+    uploadWallsRect(x0, y0, x1, y1);
+    if (gpu && S.backend === 'gpu') gpu.editWalls(S.walls, x0, y0, x1, y1);
+    const t2 = tiles.slice(), v2 = values.slice();
+    sendSim({ type: 'edits', tiles, values }, [tiles.buffer, values.buffer]);
+    sendField({ type: 'edits', tiles: t2, values: v2 }, [t2.buffer, v2.buffer]);
+  }
+
+  // ------------------------------------------------------------------ camera and input
+  const worldAt = (dx, dy) => ({ x: S.cam.cx + (dx - 0.5 * canvas.width) / S.cam.zoom, y: S.cam.cy + (dy - 0.5 * canvas.height) / S.cam.zoom });
+  const devXY = (e) => { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * S.dpr, y: (e.clientY - r.top) * S.dpr, cx: e.clientX - r.left, cy: e.clientY - r.top }; };
+  const clampZoom = (z) => Math.min(64 * S.dpr, Math.max(0.75 * S.dpr, z));
+  function zoomAt(dx, dy, f) { const before = worldAt(dx, dy); S.cam.zoom = clampZoom(S.cam.zoom * f); const after = worldAt(dx, dy); S.cam.cx += before.x - after.x; S.cam.cy += before.y - after.y; }
+  function fitMap() { S.cam.cx = W / 2; S.cam.cy = H / 2; S.cam.zoom = clampZoom(Math.min(canvas.width, canvas.height) / W * 0.98); }
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); const p = devXY(e); zoomAt(p.x, p.y, Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015))); }, { passive: false });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  let drag = null, pinch = null;
+  const touches = new Map();
+  const pinchState = () => { const [a, b] = Array.from(touches.values()); return { mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) }; };
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = devXY(e); canvas.setPointerCapture(e.pointerId);
+    if (e.pointerType === 'touch') {
+      touches.set(e.pointerId, { x: p.x, y: p.y });
+      if (touches.size === 2) { // second finger: cancel the one-finger action and start pan/zoom
+        if (drag && drag.kind === 'select') $('selbox').style.display = 'none';
+        drag = null;
+        const st = pinchState(), w = worldAt(st.mx, st.my);
+        pinch = { wx: w.x, wy: w.y, d0: st.d, z0: S.cam.zoom };
+        return;
+      }
+      if (touches.size > 2) return;
+    }
+    if (e.button === 2 || e.button === 1) { drag = { kind: 'pan', x: p.x, y: p.y, id: e.pointerId }; return; }
+    if (e.button !== 0) return;
+    const w = worldAt(p.x, p.y);
+    if (S.tool === 'select') drag = { kind: 'select', sx: p.cx, sy: p.cy, wx: w.x, wy: w.y, id: e.pointerId, shift: e.shiftKey };
+    else if (S.tool === 'wall' || S.tool === 'erase') { const v = S.tool === 'wall' ? 1 : 0, tx = Math.floor(w.x), ty = Math.floor(w.y); paint(tx, ty, v); drag = { kind: 'paint', v, tx, ty, id: e.pointerId }; }
+    else if (S.tool === 'spawn') { const msg = { type: 'spawn', cx: w.x, cy: w.y, size: S.spawnSize }; if (S.backend === 'gpu') gpuRoundTrip(msg); else sendSim(msg); }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+      const q = devXY(e); touches.set(e.pointerId, { x: q.x, y: q.y });
+      if (pinch && touches.size >= 2) {
+        const st = pinchState();
+        S.cam.zoom = clampZoom(pinch.z0 * st.d / pinch.d0);
+        S.cam.cx = pinch.wx - (st.mx - 0.5 * canvas.width) / S.cam.zoom; S.cam.cy = pinch.wy - (st.my - 0.5 * canvas.height) / S.cam.zoom;
+        return;
+      }
+    }
+    if (!drag || e.pointerId !== drag.id) return;
+    const p = devXY(e);
+    if (drag.kind === 'pan') { S.cam.cx -= (p.x - drag.x) / S.cam.zoom; S.cam.cy -= (p.y - drag.y) / S.cam.zoom; drag.x = p.x; drag.y = p.y; }
+    else if (drag.kind === 'select') {
+      const box = $('selbox'), x0 = Math.min(drag.sx, p.cx), y0 = Math.min(drag.sy, p.cy);
+      if (Math.abs(p.cx - drag.sx) + Math.abs(p.cy - drag.sy) > 4) Object.assign(box.style, { display: 'block', left: x0 + 'px', top: y0 + 'px', width: Math.abs(p.cx - drag.sx) + 'px', height: Math.abs(p.cy - drag.sy) + 'px' });
+    } else if (drag.kind === 'paint') { const w = worldAt(p.x, p.y), tx = Math.floor(w.x), ty = Math.floor(w.y); if (tx !== drag.tx || ty !== drag.ty) { paintLine(drag.tx, drag.ty, tx, ty, drag.v); drag.tx = tx; drag.ty = ty; } }
+  });
+  const endDrag = (e) => {
+    if (e.pointerType === 'touch') { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; }
+    if (!drag || e.pointerId !== drag.id) return;
+    if (drag.kind === 'select') {
+      $('selbox').style.display = 'none';
+      const p = devXY(e), w = worldAt(p.x, p.y);
+      if (Math.abs(p.cx - drag.sx) + Math.abs(p.cy - drag.sy) <= 4) { if (S.sel.length) order(w.x, w.y); }
+      else {
+        const r = [Math.min(drag.wx, w.x), Math.min(drag.wy, w.y), Math.max(drag.wx, w.x), Math.max(drag.wy, w.y)], add = drag.shift;
+        if (S.backend === 'gpu' && gpu) gpu.readPositions().then((pos) => { S.pos = pos; selectRect(r[0], r[1], r[2], r[3], add); });
+        else selectRect(r[0], r[1], r[2], r[3], add);
+      }
+    } else if (drag.kind === 'paint' && S.backend === 'gpu') { flushEdits(); gpuRoundTrip({ type: 'cull' }); }
+    drag = null;
+  };
+  canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
+
+  const hints = { select: 'Drag a box to select agents, then click where they should go.', wall: 'Drag to paint walls.', erase: 'Drag to erase walls.', spawn: 'Click to add a crowd of the chosen size; it waits for an order.' };
+  function setTool(t) { S.tool = t; document.querySelectorAll('[data-tool]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tool === t))); $('hint').textContent = hints[t]; canvas.style.cursor = t === 'select' ? 'crosshair' : 'cell'; }
+  document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  document.querySelectorAll('[data-brush]').forEach((b) => b.addEventListener('click', () => { S.brush = +b.dataset.brush; document.querySelectorAll('[data-brush]').forEach((c) => c.setAttribute('aria-pressed', String(c === b))); }));
+  function loadScene(name) {
+    S.ready = false; S.scene = name;
+    const count = FIXED_SCENES[name] || S.count;
+    sendSim({ type: 'scene', name, count });
+  }
+  document.querySelectorAll('[data-scene]').forEach((b) => b.addEventListener('click', () => loadScene(b.dataset.scene)));
+  $('count').addEventListener('input', (e) => { $('countOut').textContent = fmt(+e.target.value); });
+  $('count').addEventListener('change', (e) => {
+    S.count = +e.target.value;
+    if (FIXED_SCENES[S.scene]) toast('This test scene uses a fixed number of agents; the count applies to Crossing and Sandbox.');
+    else loadScene(S.scene);
+  });
+  $('speed').addEventListener('input', (e) => { const v = +e.target.value; S.speed = v; $('speedOut').textContent = v.toFixed(1) + ' tiles/s'; sendSim({ type: 'speed', v }); });
+  // Grouped toggles: neighbour search, spawn size, and which size class the arrows show
+  const group = (attr, cb) => document.querySelectorAll(`[${attr}]`).forEach((b) => b.addEventListener('click', () => { document.querySelectorAll(`[${attr}]`).forEach((c) => c.setAttribute('aria-pressed', String(c === b))); cb(b.getAttribute(attr)); }));
+  const setStructure = (v) => {
+    if (S.backend === 'gpu') { toast('The GPU back end always uses hashed grids; switch to the CPU to compare structures.'); return; }
+    S.structure = v; document.querySelectorAll('[data-structure]').forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.structure === v))); sendSim({ type: 'structure', v }); };
+  group('data-structure', (v) => setStructure(v));
+  group('data-size', (v) => { S.spawnSize = +v; setTool('spawn'); });
+  group('data-fclass', (v) => { S.fieldClass = +v; setFocus(S.focus); });
+  document.querySelectorAll('[data-backend]').forEach((b) => b.addEventListener('click', () => setBackend(b.dataset.backend)));
+  const setPaused = (p) => { S.paused = p; $('pause').textContent = p ? 'Play' : 'Pause'; sendSim({ type: 'pause', v: p }); };
+  $('pause').addEventListener('click', () => setPaused(!S.paused));
+  $('reset').addEventListener('click', () => loadScene(S.scene));
+  $('arrows').addEventListener('change', (e) => { S.arrows = e.target.checked; });
+  $('heat').addEventListener('change', (e) => { S.heat = e.target.checked; });
+  $('grid').addEventListener('change', (e) => { S.grid = e.target.checked; });
+  $('focus').addEventListener('change', (e) => setFocus(+e.target.value));
+  window.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = e.target && e.target.tagName;
+    if (tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (e.key === ' ' && (tag === 'INPUT' || tag === 'BUTTON')) return;
+    const flip = (id) => { const el = $(id); el.checked = !el.checked; el.dispatchEvent(new Event('change')); };
+    const pan = (dx, dy) => { S.cam.cx += dx * canvas.width * 0.1 / S.cam.zoom; S.cam.cy += dy * canvas.height * 0.1 / S.cam.zoom; };
+    switch (e.key) {
+      case '1': setTool('select'); break; case '2': setTool('wall'); break; case '3': setTool('erase'); break; case '4': setTool('spawn'); break;
+      case 'v': case 'V': flip('arrows'); break; case 'h': case 'H': flip('heat'); break;
+      case 'b': case 'B': setStructure(S.structure === 'grid' ? 'bvh' : 'grid'); break;
+      case 'g': case 'G': setBackend(S.backend === 'cpu' ? 'gpu' : 'cpu'); break;
+      case 'f': case 'F': if (S.sel.length && S.gids.length > S.sel[0]) { const g = S.gids[S.sel[0]]; if (g) setFocus(g); } break;
+      case 'Escape': clearSelection(); break;
+      case ' ': e.preventDefault(); setPaused(!S.paused); break;
+      case 'Home': fitMap(); break;
+      case 'ArrowLeft': case 'a': case 'A': pan(-1, 0); break; case 'ArrowRight': case 'd': case 'D': pan(1, 0); break;
+      case 'ArrowUp': case 'w': case 'W': pan(0, -1); break; case 'ArrowDown': case 's': case 'S': pan(0, 1); break;
+      case '+': case '=': zoomAt(canvas.width / 2, canvas.height / 2, 1.25); break; case '-': case '_': zoomAt(canvas.width / 2, canvas.height / 2, 0.8); break;
+      default: return;
+    }
+  });
+
+  // ------------------------------------------------------------------ frame loop
+  function resize() {
+    const r = canvas.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+    if (dpr !== S.dpr) { S.cam.zoom *= dpr / S.dpr; S.dpr = dpr; }
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  }
+  new ResizeObserver(resize).observe(canvas); resize();
+  // GPU back end: this frame's simulation steps, plus demand, snapshot and heat passes when due.
+  function gpuEncode(enc, dt) {
+    if (!gpu || !S.ready || S.switching) return false;
+    let steps = 0;
+    if (!S.paused) {
+      // Steps due, capped by what the GPU managed recently (about 20 ms of GPU time per frame):
+      // a slow GPU slows the simulation down instead of stalling the page.
+      S.gacc = Math.min(S.gacc + dt, 0.1);
+      const maxS = gpu.maxSteps(S.speed), due = Math.floor(S.gacc / FF.P.dt + 1e-9);
+      const budget = Math.max(1, Math.floor(20 / Math.max(0.05, S.gpuStepMs)));
+      steps = S.gpuFast ? maxS : Math.min(maxS, due, budget);
+      S.gacc = steps < due ? 0 : Math.max(0, S.gacc - steps * FF.P.dt);
+    }
+    S.lastSteps = steps;
+    if (steps) gpu.encodeSteps(enc, steps, S.speed); else gpu.encodeIdle(S.speed);
+    let demand = false;
+    if (!gpu.reading && gpu.time >= S.nextDemand) { gpu.encodeDemand(enc); demand = true; S.nextDemand = gpu.time + 0.25; }
+    if (S.heat && S.frameNo % 4 === 0) gpu.encodeHeat(enc, heatTex);
+    return demand;
+  }
+  function render(dt) {
+    const c = camData, t = theme;
+    c[0] = S.cam.cx; c[1] = S.cam.cy; c[2] = canvas.width; c[3] = canvas.height; c[4] = S.cam.zoom; c[5] = S.dpr; c[6] = S.arrows ? 1 : 0; c[7] = S.heat ? 1 : 0;
+    const put = (i, v, a) => { c[i] = v[0]; c[i + 1] = v[1]; c[i + 2] = v[2]; c[i + 3] = a; };
+    put(8, t.water, 1); put(12, t.land, 1); put(16, t.grid, S.grid ? 0.6 : 0); put(20, t.sector, 0.55); put(24, t.heat, 1); put(28, t.arrowH, 1); put(32, t.arrowV, 1); put(36, t.outside, 1); put(40, t.edge, 1); put(44, t.sel, 1);
+    device.queue.writeBuffer(camBuf, 0, c);
+    const enc = device.createCommandEncoder();
+    const onGpu = S.backend === 'gpu' && gpu, demand = onGpu ? gpuEncode(enc, dt) : false;
+    const pass = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: 'clear', clearValue: { r: t.outside[0], g: t.outside[1], b: t.outside[2], a: 1 }, storeOp: 'store' }] });
+    pass.setPipeline(mapPipe); pass.setBindGroup(0, mapBG); pass.draw(3);
+    if (onGpu) { if (gpu.M && gpu.agentsBuf) { pass.setPipeline(agentGpuPipe); pass.setBindGroup(0, gpuAgentBG()); pass.draw(6, gpu.M); } }
+    else if (S.M && S.pos) { pass.setPipeline(agentPipe); pass.setBindGroup(0, agentBG); pass.draw(6, S.M); }
+    if (ringCount) { pass.setPipeline(ringPipe); pass.setBindGroup(0, ringBG); pass.draw(6, ringCount); }
+    pass.end();
+    device.queue.submit([enc.finish()]);
+    if (demand) gpu.readStats().then(onGpuStats).catch((e) => { gpu.reading = false; console.error(e); });
+    if (onGpu && S.frameNo % 15 === 0) {
+      const t0 = performance.now(), k = Math.max(1, S.lastSteps);
+      device.queue.onSubmittedWorkDone().then(() => { const ms = performance.now() - t0; S.gpuMs += (ms - S.gpuMs) * 0.3; S.gpuStepMs += (ms / k - S.gpuStepMs) * 0.5; });
+    }
+    S.frameNo++;
+  }
+  let lastHud = 0;
+  function hud() {
+    $('sFps').textContent = Math.round(S.st.fps) + ' fps';
+    const onGpu = S.backend === 'gpu';
+    $('sSim').textContent = onGpu ? S.gpuMs.toFixed(1) + ' ms, GPU' : S.st.sim.toFixed(1) + ' ms, CPU';
+    $('sStruct').textContent = onGpu ? 'GPU hashed grids' : S.structure === 'bvh' ? 'Layered BVH' : 'Hashed grid';
+    if (onGpu) { $('sUpkeep').textContent = '–'; $('sMoves').textContent = '–'; $('sChecks').textContent = '–'; }
+    else {
+      $('sUpkeep').textContent = S.st.upkeep.toFixed(2) + ' ms';
+      $('sMoves').textContent = S.st.moves.toFixed(1) + ' ms';
+      $('sChecks').textContent = S.st.checks.toFixed(1) + (S.structure === 'bvh' ? `, ${S.st.visits.toFixed(0)} nodes` : '');
+    }
+    $('sField').textContent = S.st.field || '–';
+    $('sAgents').textContent = fmt(S.M);
+    $('sSel').textContent = fmt(S.sel.length);
+    $('sGroups').textContent = fmt(S.st.groups);
+    $('sMoving').textContent = S.paused ? 'paused' : Math.round(S.st.moving * 100) + '%';
+    $('sSettled').textContent = fmt(S.st.settled);
+    $('sArr').textContent = S.st.arrivals ? S.st.arrivals.toFixed(1) : '–';
+    $('sWorkers').textContent = mode;
+  }
+  function frame(t) {
+    const dt = S.lastFrame ? (t - S.lastFrame) / 1000 : 0.016; S.lastFrame = t;
+    if (dt > 0) S.st.fps += (1 / dt - S.st.fps) * 0.05;
+    flushEdits();
+    if (S.infoDirty && S.backend === 'gpu' && S.M) rebuildInfo();
+    if (S.backend === 'cpu' && !S.switching && S.ready && !S.awaiting) {
+      const dts = S.lastTick ? Math.min(0.1, (t - S.lastTick) / 1000) : 1 / 60; S.lastTick = t;
+      const buf = S.spare.pop();
+      sendSim({ type: 'tick', dt: dts, buf }, buf ? [buf.buffer] : []);
+      S.awaiting = true;
+    }
+    render(dt);
+    if (t - lastHud > 250) { hud(); lastHud = t; }
+    requestAnimationFrame(frame);
+  }
+
+  window.__lab3 = S; // read-only debugging hook
+  window.__lab3switch = setBackend;
+  setTool('select'); updateBackendUI();
+  if (!(await startWorkers())) startInProcess();
+  loadScene('mixed');
+  requestAnimationFrame(frame);
+})();
+
+</script>
+</body>
+</html>

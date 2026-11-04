@@ -1,0 +1,1404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flow field lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --page: #f2f6f7;
+  --water: #e3eef3;
+  --water-line: #cadbe4;
+  --land: #e5d19b;
+  --land-edge: #a4874a;
+  --ink: #17324a;
+  --ink-soft: #52697b;
+  --rule: #cddbe2;
+  --agent: #17324a;
+  --magenta: #a32277;
+  --vec-h: #c0630e;
+  --vec-v: #7c92a1;
+  --ui: 'Atkinson Hyperlegible', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --chart-type: 'Newsreader', Georgia, 'Times New Roman', serif;
+  color-scheme: light;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0b171f;
+    --water: #10212b;
+    --water-line: #1a3140;
+    --land: #6d5b33;
+    --land-edge: #9d834d;
+    --ink: #dbe7ed;
+    --ink-soft: #93a9b6;
+    --rule: #20384a;
+    --agent: #dbe7ed;
+    --magenta: #e068ba;
+    --vec-h: #e5913f;
+    --vec-v: #6f8899;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0b171f;
+  --water: #10212b;
+  --water-line: #1a3140;
+  --land: #6d5b33;
+  --land-edge: #9d834d;
+  --ink: #dbe7ed;
+  --ink-soft: #93a9b6;
+  --rule: #20384a;
+  --agent: #dbe7ed;
+  --magenta: #e068ba;
+  --vec-h: #e5913f;
+  --vec-v: #6f8899;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 15px/1.45 var(--ui);
+  -webkit-text-size-adjust: 100%;
+}
+.masthead { max-width: 1200px; margin: 0 auto; padding: 28px 20px 6px; }
+h1 {
+  font-family: var(--chart-type);
+  font-style: italic;
+  font-weight: 500;
+  font-size: clamp(32px, 4.2vw, 46px);
+  line-height: 1.02;
+  letter-spacing: -0.012em;
+  margin: 0 0 8px;
+}
+.lede { margin: 0; max-width: 64ch; color: var(--ink-soft); }
+.lab {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px 20px 40px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 32px;
+  align-items: start;
+}
+@media (max-width: 920px) { .lab { grid-template-columns: minmax(0, 1fr); gap: 24px; } }
+
+/* The chart: graduated neatline with cell rulers, like the border of a nautical chart. */
+.chartframe {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-rows: 22px auto;
+}
+.ruler { color: var(--ink-soft); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ruler.top { grid-column: 2; display: grid; grid-template-rows: 1fr 5px; }
+.ruler.top .labels { display: grid; grid-template-columns: repeat(8, 1fr); align-items: end; padding-bottom: 2px; }
+.ruler.top .labels span { justify-self: start; transform: translateX(-50%); line-height: 1; }
+.ruler.top .bar {
+  border: 1px solid var(--ink); border-bottom: 0;
+  background: repeating-linear-gradient(90deg, var(--ink) 0, var(--ink) calc(100% / 48), transparent calc(100% / 48), transparent calc(200% / 48));
+}
+.ruler.left { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: 1fr 5px; }
+.ruler.left .labels { display: grid; grid-template-rows: repeat(6, 1fr); justify-items: end; padding-right: 4px; }
+.ruler.left .labels span { align-self: start; transform: translateY(-50%); line-height: 1; }
+.ruler.left .bar {
+  border: 1px solid var(--ink); border-right: 0;
+  background: repeating-linear-gradient(180deg, var(--ink) 0, var(--ink) calc(100% / 36), transparent calc(100% / 36), transparent calc(200% / 36));
+}
+.stage { grid-column: 2; grid-row: 2; border: 1px solid var(--ink); line-height: 0; }
+#view {
+  display: block; width: 100%; aspect-ratio: 4 / 3;
+  cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.hint { margin: 10px 0 0 26px; font-size: 13.5px; color: var(--ink-soft); min-height: 1.45em; }
+
+/* Controls */
+.panel { display: grid; gap: 16px; }
+.group { margin: 0; padding: 0; border: 0; min-width: 0; }
+.group + .group { border-top: 1px solid var(--rule); padding-top: 14px; }
+.group h2 {
+  font-family: var(--chart-type); font-style: italic; font-weight: 500;
+  font-size: 20px; line-height: 1.2; margin: 0 0 8px;
+}
+button, select {
+  font: inherit; font-size: 14px; color: var(--ink);
+  background: transparent; border: 1px solid var(--rule); border-radius: 6px;
+  min-height: 36px; padding: 6px 10px; cursor: pointer;
+}
+button:hover, select:hover { border-color: var(--ink-soft); }
+button[aria-pressed="true"], button.is-paused { background: var(--ink); border-color: var(--ink); color: var(--page); }
+select { width: 100%; background: var(--page); }
+:focus-visible { outline: 2px solid var(--magenta); outline-offset: 2px; }
+.seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.seg button { padding: 6px 4px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; }
+.row + .row { margin-top: 6px; }
+.toggle {
+  display: grid; grid-template-columns: auto 1fr; column-gap: 10px;
+  align-items: start; margin: 8px 0; cursor: pointer;
+}
+.toggle input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--ink); cursor: pointer; }
+.toggle small { grid-column: 2; display: block; color: var(--ink-soft); font-size: 12.5px; line-height: 1.35; }
+.slider { display: grid; grid-template-columns: 1fr auto; align-items: baseline; margin: 10px 0 6px; }
+.slider label { font-size: 14px; }
+.slider output { font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.slider input[type="range"] { grid-column: 1 / -1; width: 100%; margin: 6px 0 0; accent-color: var(--ink); }
+.field-label { display: block; font-size: 14px; margin: 10px 0 4px; }
+.stats {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 18px; margin: 16px 0 0 26px;
+}
+.stats div { border-top: 1px solid var(--rule); padding-top: 6px; min-width: 0; }
+.stats dt { font-size: 12.5px; color: var(--ink-soft); }
+.stats dd { margin: 2px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; }
+.stats dd.quiet { font-size: 13px; color: var(--ink-soft); padding-top: 2px; }
+@media (max-width: 560px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.legend { margin: 6px 0 0; font-size: 12.5px; color: var(--ink-soft); line-height: 1.4; }
+.legend i { font-style: normal; display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin: 0 4px 2px 0; border-radius: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <h1>Flow field lab</h1>
+  <p class="lede">Paint walls, move the target and watch a crowd follow a grid flow field. Every improvement from the 2018 GameDev Stack Exchange answer can be switched off to compare.</p>
+</header>
+
+<main class="lab">
+  <section aria-label="Simulation">
+    <div class="chartframe">
+      <div class="ruler top" aria-hidden="true">
+        <div class="labels"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span><span>30</span><span>36</span><span>42</span></div>
+        <div class="bar"></div>
+      </div>
+      <div class="ruler left" aria-hidden="true">
+        <div class="labels"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span><span>30</span></div>
+        <div class="bar"></div>
+      </div>
+      <div class="stage">
+        <canvas id="view" role="img" aria-label="Flow field simulation: walls in buff, the target as a magenta ring, agents as dots"></canvas>
+      </div>
+    </div>
+    <p class="hint" id="hint" aria-live="polite"></p>
+    <dl class="stats" aria-label="Live stats">
+      <div><dt>Frame rate</dt><dd id="sFps">–</dd></div>
+      <div><dt>Simulation per frame</dt><dd id="sSim">–</dd></div>
+      <div><dt>Field rebuild</dt><dd id="sField">–</dd></div>
+      <div><dt>Agents</dt><dd id="sAgents">–</dd></div>
+      <div><dt>Moving</dt><dd id="sMoving">–</dd></div>
+      <div><dt>Arrivals per second</dt><dd id="sArr">–</dd></div>
+      <div><dt>No route</dt><dd id="sNoRoute">–</dd></div>
+      <div><dt>Target cell</dt><dd id="sTarget">–</dd></div>
+    </dl>
+  </section>
+
+  <aside class="panel" aria-label="Controls">
+    <section class="group" aria-labelledby="g-tools">
+      <h2 id="g-tools">Tools</h2>
+      <div class="seg" role="group" aria-label="Tool">
+        <button type="button" data-tool="wall" aria-pressed="true">Wall</button>
+        <button type="button" data-tool="erase" aria-pressed="false">Erase</button>
+        <button type="button" data-tool="target" aria-pressed="false">Target</button>
+        <button type="button" data-tool="spawn" aria-pressed="false">Spawn</button>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="g-scene">
+      <h2 id="g-scene">Scene</h2>
+      <div class="row" role="group" aria-label="Scene">
+        <button type="button" data-preset="open" aria-pressed="true">Open field</button>
+        <button type="button" data-preset="gates" aria-pressed="false">Two entrances</button>
+        <button type="button" data-preset="spiral" aria-pressed="false">Spiral</button>
+      </div>
+      <div class="row">
+        <button type="button" id="pause">Pause</button>
+        <button type="button" id="reset">Reset scene</button>
+        <button type="button" id="clear">Clear walls</button>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="g-field">
+      <h2 id="g-field">Field</h2>
+      <label class="toggle"><input type="checkbox" id="tieBreak" checked><span>Straight-line tie-break<small>Equal routes run straight, then turn</small></span></label>
+      <label class="toggle"><input type="checkbox" id="smoothing" checked><span>Smoothing<small>Bends the arrows toward the target</small></span></label>
+      <div class="slider"><label for="lambda">Strength</label><output id="lambdaOut" for="lambda">0.50</output><input type="range" id="lambda" min="0" max="1" step="0.05" value="0.5"></div>
+      <div class="slider"><label for="passes">Passes</label><output id="passesOut" for="passes">8</output><input type="range" id="passes" min="0" max="16" step="1" value="8"></div>
+    </section>
+
+    <section class="group" aria-labelledby="g-agents">
+      <h2 id="g-agents">Agents</h2>
+      <div class="slider"><label for="count">Count</label><output id="countOut" for="count">1,500</output><input type="range" id="count" min="0" max="5000" step="100" value="1500"></div>
+      <div class="slider"><label for="speed">Speed</label><output id="speedOut" for="speed">2.5 cells/s</output><input type="range" id="speed" min="0.5" max="6" step="0.1" value="2.5"></div>
+      <div class="slider"><label for="radius">Radius</label><output id="radiusOut" for="radius">0.10 cells</output><input type="range" id="radius" min="0.05" max="0.25" step="0.01" value="0.10"></div>
+      <label class="toggle"><input type="checkbox" id="sorted" checked><span>Sorted processing<small>Agents nearest the target move first</small></span></label>
+      <label class="toggle"><input type="checkbox" id="escape" checked><span>Stuck escape<small>Agents blocked for a quarter second try a random step</small></span></label>
+      <label class="field-label" for="arrival">On arrival</label>
+      <select id="arrival">
+        <option value="gather">Gather at the target</option>
+        <option value="respawn">Respawn in the spawn zone</option>
+      </select>
+    </section>
+
+    <section class="group" aria-labelledby="g-cong">
+      <h2 id="g-cong">Congestion</h2>
+      <label class="toggle"><input type="checkbox" id="dynamic" checked><span>Dynamic field<small>Crowded cells cost more, so crowds find other routes</small></span></label>
+      <div class="slider"><label for="gain">Gain</label><output id="gainOut" for="gain">0.25</output><input type="range" id="gain" min="0" max="2" step="0.05" value="0.25"></div>
+      <div class="slider"><label for="rebuild">Rebuild every</label><output id="rebuildOut" for="rebuild">2 steps</output><input type="range" id="rebuild" min="1" max="30" step="1" value="2"></div>
+    </section>
+
+    <section class="group" aria-labelledby="g-view">
+      <h2 id="g-view">View</h2>
+      <label class="toggle"><input type="checkbox" id="vectors" checked><span>Arrows</span></label>
+      <label class="toggle"><input type="checkbox" id="values"><span>Integrated cost</span></label>
+      <label class="toggle"><input type="checkbox" id="heat"><span>Congestion heat</span></label>
+      <p class="legend"><i id="keyH"></i>mostly horizontal <i id="keyV"></i>mostly vertical. A dot marks a cell with no route.</p>
+    </section>
+
+  </aside>
+</main>
+<script>
+/* Flow field core: grid, integration field, flow field, agents, congestion and presets.
+   No DOM access, so the same code runs in the page and in Node tests. */
+(function (root) {
+  'use strict';
+
+  const SQ2 = Math.SQRT2;
+  const EPS = 1e-6;
+  // Fixed neighbour order E, W, S, N, SE, SW, NE, NW (y grows downwards).
+  const NBX = [1, -1, 0, 0, 1, -1, 1, -1];
+  const NBY = [0, 0, 1, -1, 1, 1, -1, -1];
+  const NBL = [1, 1, 1, 1, SQ2, SQ2, SQ2, SQ2];
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const DEFAULTS = Object.freeze({
+    tieBreak: true, smoothing: true, lambda: 0.5, passes: 8,
+    sorted: true, dynamic: true, gain: 0.25, decay: 1, rebuildEvery: 2,
+    speed: 2.5, radius: 0.10, escape: true, arrival: 'gather',
+    dt: 1 / 120, dirs: 32, maxTurnSteps: 8,
+    escapeAfter: 0.25, flipAfter: 0.5, escapeTries: 4,
+  });
+
+  class FlowSim {
+    constructor(W, H, opts) {
+      this.W = W; this.H = H;
+      const N = this.N = W * H;
+      this.o = Object.assign({}, DEFAULTS, opts || {});
+      // Grid
+      this.wall = new Uint8Array(N);
+      this.baseCost = new Float32Array(N).fill(1);
+      this.cong = new Float32Array(N);
+      this.nearWall = new Uint8Array(N);
+      // Integration field
+      this.dist = new Float64Array(N);
+      this.order = new Int32Array(N); this.reach = 0;
+      this.unreach = new Int32Array(N); this.unreachN = 0;
+      this.heapCell = new Int32Array(8 * N + 8); this.heapKey = new Float64Array(8 * N + 8); this.heapN = 0;
+      this.popKey = 0;
+      // Flow field
+      this.dirX = new Float32Array(N); this.dirY = new Float32Array(N);
+      this.bufAX = new Float32Array(N); this.bufAY = new Float32Array(N);
+      this.bufBX = new Float32Array(N); this.bufBY = new Float32Array(N);
+      this.flowX = this.bufAX; this.flowY = this.bufAY;
+      // Buckets
+      this.cellStart = new Int32Array(N + 1); this.cellCount = new Int32Array(N); this.cellFill = new Int32Array(N);
+      this.cand = new Int32Array(64);
+      // Angle table
+      const K = this.o.dirs;
+      this.COS = new Float64Array(K); this.SIN = new Float64Array(K);
+      for (let i = 0; i < K; i++) { this.COS[i] = Math.cos(2 * Math.PI * i / K); this.SIN[i] = Math.sin(2 * Math.PI * i / K); }
+      // Agents
+      this.M = 0; this.cap = 0; this.grow(2048);
+      this.arrived = [];
+      // State
+      this.target = (H >> 1) * W + (W >> 1);
+      this.spawnRegion = { x0: 0, y0: 0, x1: W, y1: H };
+      this.dirty = true; this.wallsChanged = true;
+      this.needsRelax = false; this.relaxSteps = 0;
+      this.steps = 0; this.simTime = 0;
+      this.rng = mulberry32(12345);
+      this.sx = 0; this.sy = 0; this.px = 0; this.py = 0;
+      // Stats
+      this.fieldMs = 0; this.fieldBuilds = 0;
+      this.lastMoved = 0; this.lastNoRoute = 0;
+      this.arrivalsTotal = 0; this.arrBin = 0; this.binEnd = 1; this.bins = []; 
+    }
+
+    // ---------------------------------------------------------------- grid
+    open(x, y) { return x >= 0 && y >= 0 && x < this.W && y < this.H && this.wall[y * this.W + x] === 0; }
+
+    legal(x, y, k) {
+      const nx = x + NBX[k], ny = y + NBY[k];
+      if (!this.open(nx, ny)) return false;
+      if (k >= 4 && (!this.open(nx, y) || !this.open(x, ny))) return false; // no corner cutting
+      return true;
+    }
+
+    setWall(x, y, v) {
+      if (x < 0 || y < 0 || x >= this.W || y >= this.H) return false;
+      const i = y * this.W + x;
+      v = v ? 1 : 0;
+      if (v && i === this.target) return false;
+      if (this.wall[i] === v) return false;
+      this.wall[i] = v; this.cong[i] = 0;
+      this.dirty = true; this.wallsChanged = true;
+      if (v) this.removeAgentsTouching(x, y);
+      return true;
+    }
+
+    clearWalls() { this.wall.fill(0); this.cong.fill(0); this.dirty = true; this.wallsChanged = true; }
+
+    setTarget(x, y) {
+      if (!this.open(x, y)) return false;
+      const i = y * this.W + x;
+      if (i === this.target) return false;
+      this.target = i; this.dirty = true;
+      return true;
+    }
+
+    computeNearWall() {
+      const { W, H } = this;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        let nw = 0;
+        for (let k = 0; k < 8; k++) if (!this.open(x + NBX[k], y + NBY[k])) { nw = 1; break; }
+        this.nearWall[y * W + x] = nw;
+      }
+    }
+
+    // ---------------------------------------------------------------- heap
+    hPush(c, key) {
+      let i = this.heapN++;
+      const C = this.heapCell, K = this.heapKey;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (K[p] <= key) break;
+        C[i] = C[p]; K[i] = K[p]; i = p;
+      }
+      C[i] = c; K[i] = key;
+    }
+
+    hPop() {
+      const C = this.heapCell, K = this.heapKey;
+      const top = C[0]; this.popKey = K[0];
+      const n = --this.heapN;
+      if (n > 0) {
+        const lc = C[n], lk = K[n];
+        let i = 0;
+        for (;;) {
+          let l = 2 * i + 1;
+          if (l >= n) break;
+          const r = l + 1;
+          if (r < n && K[r] < K[l]) l = r;
+          if (K[l] >= lk) break;
+          C[i] = C[l]; K[i] = K[l]; i = l;
+        }
+        C[i] = lc; K[i] = lk;
+      }
+      return top;
+    }
+
+    // ---------------------------------------------------------------- field
+    rebuildField() {
+      const t0 = now();
+      if (this.wallsChanged) { this.computeNearWall(); this.wallsChanged = false; }
+      const { W, N, dist, wall } = this;
+      dist.fill(Infinity);
+      this.heapN = 0; this.reach = 0;
+      dist[this.target] = 0; this.hPush(this.target, 0);
+      while (this.heapN > 0) {
+        const u = this.hPop(), d = this.popKey;
+        if (d > dist[u]) continue; // stale duplicate
+        this.order[this.reach++] = u;
+        const ux = u % W, uy = (u / W) | 0;
+        const cu = this.baseCost[u] + this.cong[u];
+        for (let k = 0; k < 8; k++) {
+          if (!this.legal(ux, uy, k)) continue;
+          const v = (uy + NBY[k]) * W + ux + NBX[k];
+          const nd = d + NBL[k] * cu;
+          if (nd < dist[v] - EPS) { dist[v] = nd; this.hPush(v, nd); }
+        }
+      }
+      this.unreachN = 0;
+      for (let i = 0; i < N; i++) if (!wall[i] && dist[i] === Infinity) this.unreach[this.unreachN++] = i;
+      this.directionPass();
+      this.smooth();
+      this.dirty = false;
+      this.fieldMs = now() - t0; this.fieldBuilds++;
+    }
+
+    refreshDirections() { this.directionPass(); this.smooth(); }
+
+    directionPass() {
+      const { W, dist, o } = this;
+      const tx = this.target % W, ty = (this.target / W) | 0;
+      this.dirX.fill(0); this.dirY.fill(0);
+      for (let j = 1; j < this.reach; j++) {
+        const c = this.order[j], cx = c % W, cy = (c / W) | 0;
+        let best = -1, bestOff = -1, bestDiag = 2, bestDist = Infinity;
+        for (let k = 0; k < 8; k++) {
+          if (!this.legal(cx, cy, k)) continue;
+          const n = (cy + NBY[k]) * W + cx + NBX[k];
+          if (dist[n] === Infinity) continue;
+          if (o.tieBreak) {
+            // Tight neighbours only: every cell c can step to on some shortest path.
+            if (Math.abs(dist[n] + NBL[k] * (this.baseCost[n] + this.cong[n]) - dist[c]) > EPS) continue;
+            const off = Math.min(Math.abs(cx + NBX[k] - tx), Math.abs(cy + NBY[k] - ty));
+            const diag = k >= 4 ? 1 : 0;
+            if (off > bestOff || (off === bestOff && diag < bestDiag)) { best = k; bestOff = off; bestDiag = diag; }
+          } else if (dist[n] < bestDist) { best = k; bestDist = dist[n]; }
+        }
+        if (best >= 0) { this.dirX[c] = NBX[best] / NBL[best]; this.dirY[c] = NBY[best] / NBL[best]; }
+      }
+    }
+
+    smooth() {
+      const o = this.o, W = this.W;
+      let fx = this.bufAX, fy = this.bufAY, gx = this.bufBX, gy = this.bufBY;
+      fx.set(this.dirX); fy.set(this.dirY);
+      const lam = o.lambda;
+      const passes = (o.smoothing && lam > 0) ? o.passes : 0;
+      for (let p = 0; p < passes; p++) {
+        gx.set(fx); gy.set(fy);
+        for (let j = 1; j < this.reach; j++) {
+          const c = this.order[j];
+          if (this.nearWall[c]) continue;
+          const cx = c % W, cy = (c / W) | 0;
+          let sx = 0, sy = 0;
+          for (let k = 0; k < 8; k++) { const n = (cy + NBY[k]) * W + cx + NBX[k]; sx += fx[n]; sy += fy[n]; }
+          const vx = (1 - lam) * fx[c] + lam * sx * 0.125;
+          const vy = (1 - lam) * fy[c] + lam * sy * 0.125;
+          const l = Math.sqrt(vx * vx + vy * vy);
+          if (l > 1e-3) { gx[c] = vx / l; gy[c] = vy / l; } else { gx[c] = this.dirX[c]; gy[c] = this.dirY[c]; }
+        }
+        let t = fx; fx = gx; gx = t; t = fy; fy = gy; gy = t;
+      }
+      this.flowX = fx; this.flowY = fy;
+    }
+
+    // Wall-aware bilinear sample; result in this.sx, this.sy.
+    sample(x, y) {
+      const { W, H } = this;
+      const u = x - 0.5, v = y - 0.5;
+      const x0 = Math.floor(u), y0 = Math.floor(v);
+      const fx = u - x0, fy = v - y0;
+      let sx = 0, sy = 0, ws = 0;
+      for (let k = 0; k < 4; k++) {
+        const cx = x0 + (k & 1), cy = y0 + (k >> 1);
+        if (cx < 0 || cy < 0 || cx >= W || cy >= H) continue;
+        const c = cy * W + cx;
+        const vx = this.flowX[c], vy = this.flowY[c];
+        if (vx === 0 && vy === 0) continue;
+        const w = ((k & 1) ? fx : 1 - fx) * ((k >> 1) ? fy : 1 - fy);
+        sx += w * vx; sy += w * vy; ws += w;
+      }
+      let l = Math.sqrt(sx * sx + sy * sy);
+      if (ws <= 0 || l < 1e-3) {
+        const c = Math.floor(y) * W + Math.floor(x);
+        sx = this.flowX[c]; sy = this.flowY[c];
+        l = Math.sqrt(sx * sx + sy * sy);
+        if (l < 1e-6) { this.sx = 0; this.sy = 0; return false; }
+      }
+      this.sx = sx / l; this.sy = sy / l;
+      return true;
+    }
+
+    // ---------------------------------------------------------------- agents
+    grow(n) {
+      if (n <= this.cap) return;
+      const cap = Math.max(n, this.cap * 2, 1024);
+      const M = this.M;
+      const copy = (old, T) => { const a = new T(cap); if (old) a.set(old.subarray(0, M)); return a; };
+      this.ax = copy(this.ax, Float64Array); this.ay = copy(this.ay, Float64Array);
+      this.aSide = copy(this.aSide, Int8Array); this.aStuck = copy(this.aStuck, Float32Array);
+      this.aCell = new Int32Array(cap); this.cellAgents = new Int32Array(cap);
+      this.cap = cap;
+    }
+
+    addAgent(x, y) {
+      if (this.M >= this.cap) this.grow(this.M + 1);
+      const a = this.M++;
+      this.ax[a] = x; this.ay[a] = y; this.aSide[a] = (a & 1) ? 1 : -1; this.aStuck[a] = 0;
+      return a;
+    }
+
+    removeAgent(a) {
+      const last = --this.M;
+      if (a !== last) {
+        this.ax[a] = this.ax[last]; this.ay[a] = this.ay[last];
+        this.aSide[a] = this.aSide[last]; this.aStuck[a] = this.aStuck[last];
+      }
+    }
+
+    removeAgentsTouching(cx, cy) {
+      const r2 = this.o.radius * this.o.radius;
+      for (let a = this.M - 1; a >= 0; a--) {
+        const x = this.ax[a], y = this.ay[a];
+        const qx = Math.min(Math.max(x, cx), cx + 1), qy = Math.min(Math.max(y, cy), cy + 1);
+        const dx = x - qx, dy = y - qy;
+        if (dx * dx + dy * dy < r2) this.removeAgent(a);
+      }
+    }
+
+    // Growing agents overlap their neighbours; relax one iteration per step until clear.
+    setRadius(r) {
+      const grew = r > this.o.radius;
+      this.o.radius = r;
+      if (grew) { this.needsRelax = true; this.relaxSteps = 0; }
+    }
+
+    setAgentCount(n) {
+      n = Math.max(0, n | 0);
+      if (n < this.M) { this.M = n; return n; }
+      this.spawn(n - this.M, this.spawnRegion);
+      return this.M;
+    }
+
+    freeOfWalls(px, py) {
+      const r = this.o.radius, W = this.W, H = this.H;
+      if (px - r < 0 || py - r < 0 || px + r > W || py + r > H) return false;
+      const x0 = Math.floor(px - r), x1 = Math.floor(px + r), y0 = Math.floor(py - r), y1 = Math.floor(py + r);
+      for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
+        if (!this.wall[cy * W + cx]) continue;
+        const qx = Math.min(Math.max(px, cx), cx + 1), qy = Math.min(Math.max(py, cy), cy + 1);
+        const dx = px - qx, dy = py - qy;
+        if (dx * dx + dy * dy < r * r) return false;
+      }
+      return true;
+    }
+
+    // Deepest wall or edge penetration of a circle at (px, py); 0 when clear.
+    wallPen(px, py) {
+      const r = this.o.radius, W = this.W, H = this.H;
+      let pen = Math.max(0, r - px, r - py, px + r - W, py + r - H);
+      const x0 = Math.max(0, Math.floor(px - r)), x1 = Math.min(W - 1, Math.floor(px + r));
+      const y0 = Math.max(0, Math.floor(py - r)), y1 = Math.min(H - 1, Math.floor(py + r));
+      for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
+        if (!this.wall[cy * W + cx]) continue;
+        const qx = Math.min(Math.max(px, cx), cx + 1), qy = Math.min(Math.max(py, cy), cy + 1);
+        const dx = px - qx, dy = py - qy, d = Math.sqrt(dx * dx + dy * dy);
+        if (d < r && r - d > pen) pen = r - d;
+      }
+      return pen;
+    }
+
+    // Vector that pushes a penetrating circle back out of walls and grid edges (into this.wx, this.wy).
+    wallPush(px, py) {
+      const r = this.o.radius, W = this.W, H = this.H;
+      let wx = 0, wy = 0;
+      if (px < r) wx += r - px; if (px > W - r) wx -= px - (W - r);
+      if (py < r) wy += r - py; if (py > H - r) wy -= py - (H - r);
+      const x0 = Math.max(0, Math.floor(px - r)), x1 = Math.min(W - 1, Math.floor(px + r));
+      const y0 = Math.max(0, Math.floor(py - r)), y1 = Math.min(H - 1, Math.floor(py + r));
+      for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
+        if (!this.wall[cy * W + cx]) continue;
+        const qx = Math.min(Math.max(px, cx), cx + 1), qy = Math.min(Math.max(py, cy), cy + 1);
+        let dx = px - qx, dy = py - qy;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d >= r) continue;
+        if (d < 1e-9) { // centre inside the square: leave by the nearest edge
+          const l = px - cx, rr = cx + 1 - px, t = py - cy, b = cy + 1 - py, m = Math.min(l, rr, t, b);
+          if (m === l) wx -= l + r; else if (m === rr) wx += rr + r; else if (m === t) wy -= t + r; else wy += b + r;
+        } else { wx += dx / d * (r - d); wy += dy / d * (r - d); }
+      }
+      this.wx = wx; this.wy = wy;
+    }
+
+    // Overlap test against the bucket snapshot (live positions) plus agents placed since it was taken.
+    freeOfAgents(x, y, self, fresh) {
+      const W = this.W, H = this.H, rr = 4 * this.o.radius * this.o.radius;
+      const cx = Math.floor(x), cy = Math.floor(y);
+      for (let yy = Math.max(0, cy - 1); yy <= Math.min(H - 1, cy + 1); yy++) {
+        for (let xx = Math.max(0, cx - 1); xx <= Math.min(W - 1, cx + 1); xx++) {
+          const c = yy * W + xx;
+          for (let j = this.cellStart[c], e = this.cellStart[c + 1]; j < e; j++) {
+            const b = this.cellAgents[j];
+            if (b === self || b >= this.M) continue;
+            const dx = this.ax[b] - x, dy = this.ay[b] - y;
+            if (dx * dx + dy * dy < rr) return false;
+          }
+          const list = fresh && fresh.get(c);
+          if (list) for (let j = 0; j < list.length; j++) {
+            const b = list[j]; if (b === self) continue;
+            const dx = this.ax[b] - x, dy = this.ay[b] - y;
+            if (dx * dx + dy * dy < rr) return false;
+          }
+        }
+      }
+      return true;
+    }
+
+    randomPoint(region) {
+      const r1 = this.rng(), r2 = this.rng();
+      if (region.r !== undefined) {
+        const ang = 2 * Math.PI * r1, rad = region.r * Math.sqrt(r2);
+        this.px = region.cx + rad * Math.cos(ang); this.py = region.cy + rad * Math.sin(ang);
+      } else {
+        this.px = region.x0 + r1 * (region.x1 - region.x0); this.py = region.y0 + r2 * (region.y1 - region.y0);
+      }
+    }
+
+    // Rejection-sampled spawn, never overlapping. Prefers cells with a route to the target and
+    // falls back to sealed-off cells only when the region has no reachable room left.
+    spawn(count, region) {
+      if (count <= 0) return 0;
+      if (this.dirty) this.rebuildField();
+      this.grow(this.M + count);
+      this.rebuildBuckets();
+      const fresh = new Map();
+      let made = 0;
+      for (let pass = 0; pass < 2 && made < count; pass++) {
+        let tries = 0;
+        const maxTries = (count - made) * 40 + 200;
+        while (made < count && tries < maxTries) {
+          tries++;
+          this.randomPoint(region);
+          const x = this.px, y = this.py;
+          if (x < 0 || y < 0 || x >= this.W || y >= this.H) continue;
+          if (!this.freeOfWalls(x, y)) continue;
+          const c = Math.floor(y) * this.W + Math.floor(x);
+          if (pass === 0 && this.dist[c] === Infinity) continue;
+          if (!this.freeOfAgents(x, y, -1, fresh)) continue;
+          const a = this.addAgent(x, y);
+          const list = fresh.get(c);
+          if (list) list.push(a); else fresh.set(c, [a]);
+          made++;
+        }
+      }
+      return made;
+    }
+
+    // Push overlapping agents apart, e.g. after the radius grows. Jacobi-style: every agent moves by
+    // the average correction from its overlapping neighbours, capped per iteration, and slides along walls.
+    relax(maxIterations) {
+      const W = this.W, H = this.H, M = this.M, d0 = 2 * this.o.radius, cap = 0.05;
+      if (M === 0) return 0;
+      const mx = new Float64Array(M), my = new Float64Array(M), cnt = new Uint16Array(M);
+      let worst = 0;
+      for (let it = 0; it < (maxIterations || 120); it++) {
+        this.rebuildBuckets();
+        mx.fill(0); my.fill(0); cnt.fill(0); worst = 0;
+        for (let a = 0; a < M; a++) {
+          const cx = this.aCell[a] % W, cy = (this.aCell[a] / W) | 0;
+          for (let yy = Math.max(0, cy - 1); yy <= Math.min(H - 1, cy + 1); yy++) {
+            for (let xx = Math.max(0, cx - 1); xx <= Math.min(W - 1, cx + 1); xx++) {
+              const c = yy * W + xx;
+              for (let j = this.cellStart[c], e = this.cellStart[c + 1]; j < e; j++) {
+                const b = this.cellAgents[j];
+                if (b <= a) continue;
+                let dx = this.ax[b] - this.ax[a], dy = this.ay[b] - this.ay[a];
+                let d = Math.sqrt(dx * dx + dy * dy);
+                if (d >= d0) continue;
+                if (d < 1e-9) { const t = this.rng() * 2 * Math.PI; dx = Math.cos(t); dy = Math.sin(t); } else { dx /= d; dy /= d; }
+                const half = (d0 - d) * 0.5;
+                if (d0 - d > worst) worst = d0 - d;
+                mx[a] -= dx * half; my[a] -= dy * half; cnt[a]++;
+                mx[b] += dx * half; my[b] += dy * half; cnt[b]++;
+              }
+            }
+          }
+        }
+        let wallWorst = 0;
+        for (let a = 0; a < M; a++) {
+          const x = this.ax[a], y = this.ay[a];
+          const pen0 = this.wallPen(x, y);
+          if (!cnt[a] && pen0 === 0) continue;
+          let dx = cnt[a] ? mx[a] / cnt[a] : 0, dy = cnt[a] ? my[a] / cnt[a] : 0;
+          if (pen0 > 0) { this.wallPush(x, y); dx += this.wx; dy += this.wy; if (pen0 > wallWorst) wallWorst = pen0; }
+          const l = Math.sqrt(dx * dx + dy * dy);
+          if (l > cap) { dx *= cap / l; dy *= cap / l; }
+          const okAt = (px, py) => { const p = this.wallPen(px, py); return p === 0 || p < pen0; };
+          if (okAt(x + dx, y + dy)) { this.ax[a] = x + dx; this.ay[a] = y + dy; }
+          else if (okAt(x + dx, y)) this.ax[a] = x + dx;
+          else if (okAt(x, y + dy)) this.ay[a] = y + dy;
+        }
+        worst = Math.max(worst, wallWorst);
+        if (worst < 1e-3) break;
+      }
+      return worst;
+    }
+
+    rebuildBuckets() {
+      const { W, H, N, M } = this;
+      const cnt = this.cellCount;
+      cnt.fill(0);
+      for (let a = 0; a < M; a++) {
+        let cx = Math.floor(this.ax[a]), cy = Math.floor(this.ay[a]);
+        if (cx < 0) cx = 0; else if (cx >= W) cx = W - 1;
+        if (cy < 0) cy = 0; else if (cy >= H) cy = H - 1;
+        const c = cy * W + cx;
+        this.aCell[a] = c; cnt[c]++;
+      }
+      let s = 0;
+      for (let c = 0; c < N; c++) { this.cellStart[c] = s; s += cnt[c]; }
+      this.cellStart[N] = s;
+      const fill = this.cellFill;
+      fill.set(this.cellStart.subarray(0, N));
+      for (let a = 0; a < M; a++) this.cellAgents[fill[this.aCell[a]]++] = a;
+    }
+
+    // Leaky congestion: rises while a cell is occupied, settles at g * n / d.
+    updateCongestion(dt) {
+      const g = this.o.gain, d = this.o.decay, cong = this.cong, cnt = this.cellCount;
+      for (let c = 0; c < this.N; c++) {
+        const n = cnt[c];
+        if (n === 0 && cong[c] === 0) continue;
+        let v = cong[c] + (g * n - d * cong[c]) * dt;
+        if (v < 1e-4) v = 0;
+        cong[c] = v;
+      }
+    }
+
+    tryMove(x, y, px, py, n) {
+      // Never enter a wall; an agent already touching one (after the radius grew) may climb out.
+      if (!this.freeOfWalls(px, py) && this.wallPen(px, py) >= this.wallPen(x, y) - 1e-12) return false;
+      const rr = 4 * this.o.radius * this.o.radius;
+      for (let j = 0; j < n; j++) {
+        const b = this.cand[j];
+        const dx = px - this.ax[b], dy = py - this.ay[b];
+        const dNew = dx * dx + dy * dy;
+        if (dNew < rr) {
+          const ex = x - this.ax[b], ey = y - this.ay[b];
+          const dOld = ex * ex + ey * ey;
+          if (dOld >= rr || dNew < dOld) return false; // new overlap, or a deeper one
+        }
+      }
+      return true;
+    }
+
+    moveAgent(a, L, dt) {
+      const o = this.o, W = this.W, H = this.H, r = o.radius;
+      const x = this.ax[a], y = this.ay[a];
+      const c = Math.floor(y) * W + Math.floor(x);
+      let dx, dy;
+      if (c === this.target) {
+        if (o.arrival === 'respawn') { this.arrived.push(a); return; }
+        dx = (c % W) + 0.5 - x; dy = ((c / W) | 0) + 0.5 - y;
+        const l = Math.sqrt(dx * dx + dy * dy);
+        if (l < L) return;
+        dx /= l; dy /= l;
+      } else {
+        if (!this.sample(x, y)) { this.noRouteCount++; return; }
+        dx = this.sx; dy = this.sy;
+      }
+      // Gather candidates once per step: agents that any move of length L could touch.
+      const R = 2 * r + 2 * L, lim = (2 * r + L) * (2 * r + L);
+      const x0 = Math.max(0, Math.floor(x - R)), x1 = Math.min(W - 1, Math.floor(x + R));
+      const y0 = Math.max(0, Math.floor(y - R)), y1 = Math.min(H - 1, Math.floor(y + R));
+      const cand = this.cand, capN = cand.length;
+      let n = 0;
+      for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
+        const cc = cy * W + cx;
+        for (let j = this.cellStart[cc], e = this.cellStart[cc + 1]; j < e; j++) {
+          const b = this.cellAgents[j];
+          if (b === a) continue;
+          const ex = this.ax[b] - x, ey = this.ay[b] - y;
+          if (ex * ex + ey * ey < lim && n < capN) cand[n++] = b;
+        }
+      }
+      // 1) The exact desired direction.
+      let px = x + L * dx, py = y + L * dy;
+      if (this.tryMove(x, y, px, py, n)) { this.commit(a, px, py); return; }
+      // 2) Table directions around it, preferred side first, up to +-90 degrees.
+      const K = o.dirs;
+      let base = Math.round(Math.atan2(dy, dx) / (2 * Math.PI / K));
+      base = ((base % K) + K) % K;
+      const side = this.aSide[a];
+      for (let s = 1; s <= o.maxTurnSteps; s++) {
+        for (let q = 0; q < 2; q++) {
+          const idx = (((base + (q === 0 ? side : -side) * s) % K) + K) % K;
+          px = x + L * this.COS[idx]; py = y + L * this.SIN[idx];
+          if (this.tryMove(x, y, px, py, n)) { this.commit(a, px, py); return; }
+        }
+      }
+      // 3) Blocked: escape after a while, flip the preferred side after longer.
+      this.aStuck[a] += dt;
+      if (o.escape && this.aStuck[a] > o.escapeAfter) {
+        for (let t = 0; t < o.escapeTries; t++) {
+          const idx = (this.rng() * K) | 0;
+          px = x + L * this.COS[idx]; py = y + L * this.SIN[idx];
+          if (this.tryMove(x, y, px, py, n)) { this.commit(a, px, py); this.aSide[a] = -this.aSide[a]; return; }
+        }
+      }
+      if (this.aStuck[a] > o.flipAfter) { this.aSide[a] = -this.aSide[a]; this.aStuck[a] = 0; }
+    }
+
+    commit(a, px, py) { this.ax[a] = px; this.ay[a] = py; this.aStuck[a] = 0; this.movedCount++; }
+
+    respawnArrived() {
+      const reg = this.spawnRegion, fresh = new Map();
+      for (let i = 0; i < this.arrived.length; i++) {
+        const a = this.arrived[i];
+        let placed = false, lastX = -1, lastY = -1;
+        for (let t = 0; t < 30 && !placed; t++) {
+          this.randomPoint(reg);
+          const x = this.px, y = this.py;
+          if (x < 0 || y < 0 || x >= this.W || y >= this.H || !this.freeOfWalls(x, y)) continue;
+          const c = Math.floor(y) * this.W + Math.floor(x);
+          if (this.dist[c] === Infinity || c === this.target) continue;
+          lastX = x; lastY = y;
+          if (!this.freeOfAgents(x, y, a, fresh)) continue;
+          this.ax[a] = x; this.ay[a] = y; placed = true;
+          const list = fresh.get(c);
+          if (list) list.push(a); else fresh.set(c, [a]);
+        }
+        if (!placed && lastX >= 0) { this.ax[a] = lastX; this.ay[a] = lastY; placed = true; }
+        this.aStuck[a] = 0;
+        if (placed) { this.arrivalsTotal++; this.arrBin++; }
+      }
+      this.arrived.length = 0;
+    }
+
+    step() {
+      const o = this.o;
+      const L = o.speed * o.dt;
+      const sub = Math.max(1, Math.ceil(L / (o.radius / 4) - 1e-9)); // keep each move <= r/4
+      const dts = o.dt / sub, Ls = L / sub;
+      let moved = 0, noRoute = 0;
+      if (this.needsRelax) {
+        const worst = this.relax(1);
+        if (worst < 1e-3 || ++this.relaxSteps > 2400) this.needsRelax = false;
+      }
+      for (let s = 0; s < sub; s++) {
+        this.rebuildBuckets();
+        if (o.dynamic) this.updateCongestion(dts);
+        if (s === 0 && (this.dirty || (o.dynamic && this.steps % o.rebuildEvery === 0))) this.rebuildField();
+        this.movedCount = 0; this.noRouteCount = 0; this.arrived.length = 0;
+        if (o.sorted) {
+          for (let j = 0; j < this.reach; j++) {
+            const c = this.order[j];
+            for (let i = this.cellStart[c], e = this.cellStart[c + 1]; i < e; i++) this.moveAgent(this.cellAgents[i], Ls, dts);
+          }
+          for (let j = 0; j < this.unreachN; j++) {
+            const c = this.unreach[j];
+            for (let i = this.cellStart[c], e = this.cellStart[c + 1]; i < e; i++) this.moveAgent(this.cellAgents[i], Ls, dts);
+          }
+        } else {
+          for (let a = 0; a < this.M; a++) this.moveAgent(a, Ls, dts);
+        }
+        if (this.arrived.length) this.respawnArrived();
+        moved = this.movedCount; noRoute = this.noRouteCount;
+      }
+      this.steps++; this.simTime += o.dt;
+      this.lastMoved = this.M ? moved / this.M : 0;
+      this.lastNoRoute = noRoute;
+      if (this.simTime >= this.binEnd) {
+        this.bins.push(this.arrBin); if (this.bins.length > 5) this.bins.shift();
+        this.arrBin = 0; this.binEnd = Math.floor(this.simTime) + 1;
+      }
+    }
+
+    arrivalsPerSecond() {
+      if (!this.bins.length) return 0;
+      let s = 0; for (const b of this.bins) s += b;
+      return s / this.bins.length;
+    }
+
+    resetStats() { this.arrivalsTotal = 0; this.arrBin = 0; this.bins = []; this.binEnd = Math.floor(this.simTime) + 1; }
+  }
+
+  // ------------------------------------------------------------------ presets
+  function ring(sim, x0, y0, x1, y1) {
+    for (let x = x0; x <= x1; x++) { sim.setWall(x, y0, 1); sim.setWall(x, y1, 1); }
+    for (let y = y0; y <= y1; y++) { sim.setWall(x0, y, 1); sim.setWall(x1, y, 1); }
+  }
+
+  function scatter(sim, fraction, seed, keepClear) {
+    const rnd = mulberry32(seed);
+    for (let y = 0; y < sim.H; y++) for (let x = 0; x < sim.W; x++) {
+      const roll = rnd();
+      if (keepClear(x, y)) continue;
+      if (roll < fraction) sim.setWall(x, y, 1);
+    }
+  }
+
+  const PRESETS = {
+    open: {
+      name: 'Open field', arrival: 'gather', target: [6, 18],
+      build(sim) {
+        scatter(sim, 0.05, 7, (x, y) => Math.abs(x - 6) <= 1 && Math.abs(y - 18) <= 1);
+        sim.spawnRegion = { x0: 30, y0: 2, x1: 46, y1: 34 };
+      },
+    },
+    gates: {
+      name: 'Two entrances', arrival: 'respawn', target: [12, 18],
+      build(sim) {
+        ring(sim, 8, 13, 16, 23);
+        sim.setWall(16, 18, 0); sim.setWall(8, 18, 0); // near gap east, far gap west
+        sim.spawnRegion = { x0: 28, y0: 4, x1: 46, y1: 32 };
+      },
+    },
+    spiral: {
+      name: 'Spiral', arrival: 'gather', target: [11, 24],
+      build(sim) {
+        scatter(sim, 0.05, 11, (x, y) => (x >= 3 && x <= 19 && y >= 16 && y <= 32));
+        ring(sim, 4, 17, 18, 31);
+        sim.setWall(18, 18, 0); sim.setWall(18, 19, 0); // near entrance, top right
+        sim.setWall(5, 31, 0); sim.setWall(6, 31, 0);   // far entrance, bottom left
+        ring(sim, 7, 20, 15, 28);
+        sim.setWall(8, 20, 0); sim.setWall(9, 20, 0);   // inner opening
+        sim.spawnRegion = { x0: 26, y0: 2, x1: 46, y1: 20 };
+      },
+    },
+  };
+
+  function applyPreset(sim, key, agentCount) {
+    const p = PRESETS[key];
+    sim.M = 0;
+    sim.clearWalls();
+    sim.cong.fill(0);
+    sim.setTarget(p.target[0], p.target[1]); // before walls, so walls never collide with an old target
+    p.build(sim);
+    sim.o.arrival = p.arrival;
+    sim.rng = mulberry32(12345);
+    sim.rebuildField();
+    sim.spawn(agentCount, sim.spawnRegion);
+    sim.resetStats();
+  }
+
+  const api = { FlowSim, DEFAULTS, PRESETS, applyPreset, mulberry32 };
+  root.FF = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+(function () {
+  'use strict';
+  const { FlowSim, PRESETS, applyPreset } = window.FF;
+  const W = 48, H = 36, N = W * H;
+  const MAX_COUNT_SLIDER = 5000;
+  const sim = new FlowSim(W, H);
+  const $ = (id) => document.getElementById(id);
+
+  const canvas = $('view');
+  const ctx = canvas.getContext('2d');
+  const layer = document.createElement('canvas'); // grid lines and walls, redrawn only when they change
+  const lctx = layer.getContext('2d');
+
+  const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const state = {
+    tool: 'wall', preset: 'open', paused: reduceMotion,
+    vectors: true, values: false, heat: false,
+    count: 1500, hover: null, layerDirty: true, valuesHidden: false,
+  };
+  let theme = {};
+  let dpr = 1, sx = 1, sy = 1;
+
+  // ------------------------------------------------------------------ theme
+  function readTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name) => cs.getPropertyValue(name).trim();
+    theme = {
+      water: v('--water'), grid: v('--water-line'), land: v('--land'), landEdge: v('--land-edge'),
+      ink: v('--ink'), inkSoft: v('--ink-soft'), agent: v('--agent'), magenta: v('--magenta'),
+      vecH: v('--vec-h'), vecV: v('--vec-v'), font: v('--ui'),
+    };
+    $('keyH').style.background = theme.vecH;
+    $('keyV').style.background = theme.vecV;
+    state.layerDirty = true;
+  }
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', readTheme); else if (mq.addListener) mq.addListener(readTheme);
+  }
+  new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+
+  // ------------------------------------------------------------------ sizing
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width) return;
+    dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const bw = Math.max(1, Math.round(rect.width * dpr));
+    const bh = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== bw || canvas.height !== bh) {
+      canvas.width = bw; canvas.height = bh;
+      layer.width = bw; layer.height = bh;
+    }
+    sx = bw / W; sy = bh / H;
+    state.layerDirty = true;
+    updateHint();
+  }
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas);
+  window.addEventListener('resize', resize);
+
+  // ------------------------------------------------------------------ drawing
+  const X = (x) => x * sx, Y = (y) => y * sy;
+
+  function drawLayer() {
+    const c = lctx, w = layer.width, h = layer.height;
+    c.fillStyle = theme.water;
+    c.fillRect(0, 0, w, h);
+    c.strokeStyle = theme.grid;
+    c.lineWidth = Math.max(1, Math.round(dpr * 0.75));
+    c.beginPath();
+    for (let x = 1; x < W; x++) { const px = Math.round(X(x)) + 0.5; c.moveTo(px, 0); c.lineTo(px, h); }
+    for (let y = 1; y < H; y++) { const py = Math.round(Y(y)) + 0.5; c.moveTo(0, py); c.lineTo(w, py); }
+    c.stroke();
+    // Land
+    c.fillStyle = theme.land;
+    for (let i = 0; i < N; i++) {
+      if (!sim.wall[i]) continue;
+      const x = i % W, y = (i / W) | 0;
+      const x0 = Math.round(X(x)), y0 = Math.round(Y(y));
+      c.fillRect(x0, y0, Math.round(X(x + 1)) - x0, Math.round(Y(y + 1)) - y0);
+    }
+    // Coastline: an edge wherever land meets water
+    c.strokeStyle = theme.landEdge;
+    c.lineWidth = Math.max(1, Math.round(dpr));
+    c.beginPath();
+    const water = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !sim.wall[y * W + x];
+    for (let i = 0; i < N; i++) {
+      if (!sim.wall[i]) continue;
+      const x = i % W, y = (i / W) | 0;
+      const x0 = Math.round(X(x)), x1 = Math.round(X(x + 1)), y0 = Math.round(Y(y)), y1 = Math.round(Y(y + 1));
+      if (water(x, y - 1)) { c.moveTo(x0, y0 + 0.5); c.lineTo(x1, y0 + 0.5); }
+      if (water(x, y + 1)) { c.moveTo(x0, y1 - 0.5); c.lineTo(x1, y1 - 0.5); }
+      if (water(x - 1, y)) { c.moveTo(x0 + 0.5, y0); c.lineTo(x0 + 0.5, y1); }
+      if (water(x + 1, y)) { c.moveTo(x1 - 0.5, y0); c.lineTo(x1 - 0.5, y1); }
+    }
+    c.stroke();
+    state.layerDirty = false;
+  }
+
+  function drawHeat() {
+    ctx.fillStyle = theme.magenta;
+    for (let i = 0; i < N; i++) {
+      const c = sim.cong[i];
+      if (c < 0.02 || sim.wall[i]) continue;
+      ctx.globalAlpha = Math.min(1, c / 6) * 0.6;
+      const x = i % W, y = (i / W) | 0;
+      ctx.fillRect(X(x), Y(y), sx, sy);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawVectors() {
+    const ph = new Path2D(), pv = new Path2D(), pd = new Path2D();
+    const len = 0.4, barb = 0.15, c150 = -0.8660254, s150 = 0.5;
+    const dotR = Math.max(1, 1.1 * dpr);
+    for (let i = 0; i < N; i++) {
+      if (sim.wall[i] || i === sim.target) continue;
+      const x = i % W, y = (i / W) | 0;
+      const cx = X(x + 0.5), cy = Y(y + 0.5);
+      const fx = sim.flowX[i], fy = sim.flowY[i];
+      if (fx === 0 && fy === 0) { pd.moveTo(cx + dotR, cy); pd.arc(cx, cy, dotR, 0, Math.PI * 2); continue; }
+      const p = Math.abs(fx) >= Math.abs(fy) ? ph : pv;
+      const tx = cx + fx * len * sx, ty = cy + fy * len * sy;
+      p.moveTo(cx, cy); p.lineTo(tx, ty);
+      // arrowhead: two barbs at +-150 degrees from the direction
+      p.moveTo(tx + (fx * c150 - fy * s150) * barb * sx, ty + (fx * s150 + fy * c150) * barb * sy);
+      p.lineTo(tx, ty);
+      p.lineTo(tx + (fx * c150 + fy * s150) * barb * sx, ty + (-fx * s150 + fy * c150) * barb * sy);
+    }
+    ctx.lineWidth = Math.max(1, 1.15 * dpr);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = theme.vecH; ctx.stroke(ph);
+    ctx.strokeStyle = theme.vecV; ctx.stroke(pv);
+    ctx.fillStyle = theme.inkSoft; ctx.fill(pd);
+  }
+
+  function drawValues() {
+    const cssCell = sx / dpr;
+    state.valuesHidden = cssCell < 14;
+    if (state.valuesHidden) return;
+    ctx.font = `${Math.round(8.5 * dpr)}px ${theme.font}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = theme.ink;
+    for (let j = 0; j < sim.reach; j++) {
+      const i = sim.order[j], d = sim.dist[i];
+      const x = i % W, y = (i / W) | 0;
+      ctx.fillText(d < 10 ? d.toFixed(1) : String(Math.round(d)), X(x + 0.5), Y(y + 0.3));
+    }
+  }
+
+  function drawSpawnZone() {
+    const r = sim.spawnRegion;
+    ctx.save();
+    ctx.setLineDash([4 * dpr, 4 * dpr]);
+    ctx.lineWidth = Math.max(1, dpr);
+    ctx.strokeStyle = theme.inkSoft;
+    ctx.strokeRect(Math.round(X(r.x0)) + 0.5, Math.round(Y(r.y0)) + 0.5, Math.round(X(r.x1) - X(r.x0)), Math.round(Y(r.y1) - Y(r.y0)));
+    ctx.restore();
+  }
+
+  function drawTargetCell() {
+    const x = sim.target % W, y = (sim.target / W) | 0;
+    ctx.globalAlpha = 0.22; ctx.fillStyle = theme.magenta;
+    ctx.fillRect(X(x), Y(y), sx, sy);
+    ctx.globalAlpha = 1;
+  }
+
+  function drawTargetRing() {
+    const x = sim.target % W, y = (sim.target / W) | 0;
+    const cx = X(x + 0.5), cy = Y(y + 0.5), r = Math.max(5 * dpr, 0.62 * sx);
+    ctx.strokeStyle = theme.magenta;
+    ctx.lineWidth = Math.max(1.5, 2 * dpr);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, r * 1.6, 0, Math.PI * 2);
+    ctx.globalAlpha = 0.45; ctx.lineWidth = Math.max(1, dpr); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.fillStyle = theme.magenta;
+    ctx.beginPath(); ctx.arc(cx, cy, Math.max(2 * dpr, 0.14 * sx), 0, Math.PI * 2); ctx.fill();
+  }
+
+  function drawAgents() {
+    const M = sim.M;
+    if (!M) return;
+    const d = Math.max(2 * dpr, 2 * sim.o.radius * sx), h = d / 2;
+    ctx.fillStyle = theme.agent;
+    ctx.beginPath();
+    if (d < 5 * dpr) {
+      for (let a = 0; a < M; a++) ctx.rect(X(sim.ax[a]) - h, Y(sim.ay[a]) - h, d, d);
+    } else {
+      for (let a = 0; a < M; a++) { const px = X(sim.ax[a]), py = Y(sim.ay[a]); ctx.moveTo(px + h, py); ctx.arc(px, py, h, 0, Math.PI * 2); }
+    }
+    ctx.fill();
+  }
+
+  function drawHover() {
+    const hv = state.hover;
+    if (!hv || state.tool === 'spawn') return;
+    ctx.strokeStyle = theme.ink;
+    ctx.lineWidth = Math.max(1, dpr);
+    ctx.strokeRect(Math.round(X(hv.x)) + 0.5, Math.round(Y(hv.y)) + 0.5, Math.round(sx) - 1, Math.round(sy) - 1);
+  }
+
+  function render() {
+    if (state.layerDirty) drawLayer();
+    ctx.drawImage(layer, 0, 0);
+    if (state.heat) drawHeat();
+    drawTargetCell();
+    if (state.vectors) drawVectors();
+    if (state.values) drawValues();
+    if (sim.o.arrival === 'respawn') drawSpawnZone();
+    drawAgents();
+    drawTargetRing();
+    drawHover();
+  }
+
+  // ------------------------------------------------------------------ input
+  function toCell(e) {
+    const rect = canvas.getBoundingClientRect();
+    const gx = (e.clientX - rect.left) / rect.width * W;
+    const gy = (e.clientY - rect.top) / rect.height * H;
+    return { gx, gy, x: Math.min(W - 1, Math.max(0, Math.floor(gx))), y: Math.min(H - 1, Math.max(0, Math.floor(gy))) };
+  }
+
+  function applyAt(action, x, y) {
+    let changed = false;
+    if (action === 'wall') changed = sim.setWall(x, y, 1);
+    else if (action === 'erase') changed = sim.setWall(x, y, 0);
+    else if (action === 'target') sim.setTarget(x, y);
+    if (changed) state.layerDirty = true;
+  }
+
+  // Every cell on the segment between two pointer samples, so fast drags leave no gaps.
+  function line(x0, y0, x1, y1, fn) {
+    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), stx = x0 < x1 ? 1 : -1, sty = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+    for (;;) {
+      fn(x0, y0);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += stx; }
+      if (e2 <= dx) { err += dx; y0 += sty; }
+    }
+  }
+
+  let drag = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 && e.button !== 2) return;
+    e.preventDefault();
+    const c = toCell(e);
+    let action = e.button === 2 ? 'erase' : (e.shiftKey ? 'target' : state.tool);
+    if (action === 'spawn') {
+      sim.spawn(50, { cx: c.gx, cy: c.gy, r: 3 });
+      syncCount();
+      return;
+    }
+    canvas.setPointerCapture(e.pointerId);
+    drag = { action, x: c.x, y: c.y, id: e.pointerId };
+    applyAt(action, c.x, c.y);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const c = toCell(e);
+    state.hover = e.pointerType === 'mouse' ? c : null;
+    if (!drag || e.pointerId !== drag.id) return;
+    if (c.x === drag.x && c.y === drag.y) return;
+    if (drag.action === 'target') applyAt('target', c.x, c.y);
+    else line(drag.x, drag.y, c.x, c.y, (x, y) => applyAt(drag.action, x, y));
+    drag.x = c.x; drag.y = c.y;
+  });
+  const endDrag = (e) => { if (drag && e.pointerId === drag.id) { drag = null; syncCount(); } };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerleave', () => { state.hover = null; });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // ------------------------------------------------------------------ controls
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const hints = {
+    wall: coarse ? 'Drag to paint walls. Use Erase and Target for the other edits.' : 'Drag to paint walls. Right-drag erases; Shift-click moves the target.',
+    erase: 'Drag to erase walls.',
+    target: 'Click or drag to move the target.',
+    spawn: 'Click to add 50 agents around the pointer.',
+  };
+  function updateHint() {
+    let text = hints[state.tool];
+    if (state.paused) text = 'Paused. ' + text;
+    if (state.values && state.valuesHidden) text += ' Integrated costs need a wider window.';
+    $('hint').textContent = text;
+  }
+
+  function setTool(tool) {
+    state.tool = tool;
+    document.querySelectorAll('[data-tool]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tool === tool)));
+    updateHint();
+  }
+  document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+
+  function loadPreset(key) {
+    state.preset = key;
+    applyPreset(sim, key, state.count);
+    document.querySelectorAll('[data-preset]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.preset === key)));
+    $('arrival').value = sim.o.arrival;
+    state.layerDirty = true;
+    syncCount();
+    updateStatsLabels();
+  }
+  document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => loadPreset(b.dataset.preset)));
+
+  function setPaused(p) {
+    state.paused = p;
+    $('pause').textContent = p ? 'Play' : 'Pause';
+    $('pause').classList.toggle('is-paused', p);
+    updateHint();
+  }
+  $('pause').addEventListener('click', () => setPaused(!state.paused));
+  $('reset').addEventListener('click', () => loadPreset(state.preset));
+  $('clear').addEventListener('click', () => { sim.clearWalls(); state.layerDirty = true; });
+
+  const fmtInt = (n) => Math.round(n).toLocaleString('en-US');
+
+  function bindToggle(id, apply) {
+    const el = $(id);
+    el.addEventListener('change', () => apply(el.checked));
+  }
+  bindToggle('tieBreak', (v) => { sim.o.tieBreak = v; sim.dirty = true; });
+  bindToggle('smoothing', (v) => { sim.o.smoothing = v; sim.dirty = true; });
+  bindToggle('sorted', (v) => { sim.o.sorted = v; });
+  bindToggle('escape', (v) => { sim.o.escape = v; });
+  bindToggle('dynamic', (v) => { sim.o.dynamic = v; if (!v) sim.cong.fill(0); sim.dirty = true; });
+  bindToggle('vectors', (v) => { state.vectors = v; });
+  bindToggle('values', (v) => { state.values = v; updateHint(); });
+  bindToggle('heat', (v) => { state.heat = v; });
+
+  function bindSlider(id, format, onInput, onChange) {
+    const el = $(id), out = $(id + 'Out');
+    const show = () => { out.textContent = format(parseFloat(el.value)); };
+    el.addEventListener('input', () => { show(); if (onInput) onInput(parseFloat(el.value)); });
+    if (onChange) el.addEventListener('change', () => onChange(parseFloat(el.value)));
+    show();
+  }
+  bindSlider('lambda', (v) => v.toFixed(2), (v) => { sim.o.lambda = v; sim.dirty = true; });
+  bindSlider('passes', (v) => String(v), (v) => { sim.o.passes = v | 0; sim.dirty = true; });
+  bindSlider('speed', (v) => v.toFixed(1) + ' cells/s', (v) => { sim.o.speed = v; });
+  bindSlider('radius', (v) => v.toFixed(2) + ' cells', (v) => { sim.setRadius(v); });
+  bindSlider('gain', (v) => v.toFixed(2), (v) => { sim.o.gain = v; });
+  bindSlider('rebuild', (v) => (v === 1 ? 'every step' : v + ' steps'), (v) => { sim.o.rebuildEvery = v | 0; });
+  bindSlider('count', (v) => fmtInt(v), null, (v) => { state.count = v; sim.setAgentCount(v); syncCount(); });
+
+  $('arrival').addEventListener('change', (e) => { sim.o.arrival = e.target.value; sim.resetStats(); updateStatsLabels(); });
+
+  function syncCount() {
+    const el = $('count');
+    el.value = String(Math.min(MAX_COUNT_SLIDER, sim.M));
+    $('countOut').textContent = fmtInt(sim.M);
+  }
+
+  function updateStatsLabels() {
+    $('sArr').classList.toggle('quiet', sim.o.arrival !== 'respawn');
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = e.target && e.target.tagName;
+    if (tag === 'SELECT' || tag === 'TEXTAREA') return;            // type-ahead belongs to the menu
+    if (e.key === ' ' && (tag === 'INPUT' || tag === 'BUTTON')) return; // Space keeps its native job there
+    const flip = (id) => { const el = $(id); el.checked = !el.checked; el.dispatchEvent(new Event('change')); };
+    switch (e.key) {
+      case '1': setTool('wall'); break;
+      case '2': setTool('erase'); break;
+      case '3': setTool('target'); break;
+      case '4': setTool('spawn'); break;
+      case 'v': case 'V': flip('vectors'); break;
+      case 'n': case 'N': flip('values'); break;
+      case 'h': case 'H': flip('heat'); break;
+      case 'r': case 'R': loadPreset(state.preset); break;
+      case ' ': e.preventDefault(); setPaused(!state.paused); break;
+      default: return;
+    }
+  });
+
+  // ------------------------------------------------------------------ stats
+  let fpsEma = 60, simEma = 0, fieldEma = 0, seenBuilds = -1;
+  function updateStats() {
+    $('sFps').textContent = Math.round(fpsEma) + ' fps';
+    $('sSim').textContent = simEma.toFixed(1) + ' ms';
+    $('sField').textContent = fieldEma.toFixed(2) + ' ms';
+    $('sAgents').textContent = fmtInt(sim.M);
+    $('sMoving').textContent = state.paused ? 'paused' : Math.round(sim.lastMoved * 100) + '%';
+    $('sArr').textContent = sim.o.arrival === 'respawn' ? sim.arrivalsPerSecond().toFixed(0) : 'Respawn mode only';
+    $('sNoRoute').textContent = fmtInt(sim.lastNoRoute);
+    $('sTarget').textContent = (sim.target % W) + ', ' + ((sim.target / W) | 0);
+  }
+
+  // ------------------------------------------------------------------ loop
+  let last = performance.now(), acc = 0, lastStats = 0;
+  function frame(t) {
+    const dt = Math.min(0.1, Math.max(0, (t - last) / 1000));
+    last = t;
+    if (dt > 0) fpsEma += (1 / dt - fpsEma) * 0.05;
+    if (!state.paused) {
+      acc += dt;
+      let n = 0;
+      const t0 = performance.now();
+      while (acc >= sim.o.dt && n < 4) { sim.step(); acc -= sim.o.dt; n++; }
+      if (n === 4) acc = 0;
+      simEma += (performance.now() - t0 - simEma) * 0.1;
+    } else if (sim.dirty) {
+      sim.rebuildField();
+    }
+    if (sim.fieldBuilds !== seenBuilds) { fieldEma += (sim.fieldMs - fieldEma) * 0.2; seenBuilds = sim.fieldBuilds; }
+    render();
+    if (t - lastStats > 250) { updateStats(); lastStats = t; }
+    requestAnimationFrame(frame);
+  }
+
+  readTheme();
+  resize();
+  setTool('wall');
+  setPaused(state.paused);
+  loadPreset('open');
+  requestAnimationFrame((t) => { last = t; frame(t); });
+})();
+
+</script>
+</body>
+</html>
