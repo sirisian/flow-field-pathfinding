@@ -954,10 +954,16 @@ var SimCore = (function () {
   const COLOR_CELL = 4, INV_CC = 1 / COLOR_CELL;
   // Work units: each pass is split into strips of 2 cell rows (8 tiles). A cell never straddles two strips, so any
   // thread can take any strip of a pass, in any order, and agents inside a cell still move in index order.
-  const SHARED_KEYS = ['ax', 'ay', 'aG', 'aR', 'aC', 'aLv', 'aVX', 'aVY', 'aSide', 'aStuck', 'aSleep', 'aTry', 'aUid', 'wall', 'clear', 'F4', 'lastT', 'stamp', 'COS', 'SIN', 'passIdx', 'passStart'];
-  const LV_KEYS = ['start', 'agents', 'px', 'py', 'pr'];
+  const SHARED_KEYS = ['ax', 'ay', 'aG', 'aR', 'aC', 'aLv', 'aVX', 'aVY', 'aSide', 'aStuck', 'aSleep', 'aTry', 'aUid', 'aT0', 'aS', 'idOf', 'bvCell', 'bvLayer', 'ord', 'aB',
+    'wall', 'clear', 'F4', 'lastT', 'rho', 'jam', 'secActive', 'stamp', 'COS', 'SIN', 'passIdx', 'passStart', 'passItems', 'passItemStart'];
+  const LV_KEYS = ['start', 'count', 'fill', 'agents', 'px', 'py', 'pr'];
+  // Per-agent arrays the re-sort permutes (the same list, in the same order, as the one-thread re-sort).
+  const PERM = ['ax', 'ay', 'aVX', 'aVY', 'aStuck', 'aT0', 'aR', 'aTry', 'idOf', 'bvCell', 'aG', 'aSide', 'aSleep', 'aS', 'aC', 'aLv', 'bvLayer', 'aUid'];
+  // Phases of a threaded substep: every thread takes work items of the current phase until none are left.
+  const PH_MOVE = 1, PH_CONG = 2, PH_GCOUNT = 3, PH_GFILL = 4, PH_PERM = 5, PH_END = 9;
   const BENCH_WARM = 24, BENCH_TICKS = 48; // per measured run: ticks after a switch that are not timed, then timed ticks
-  const STRIP_CELLS = 2, NSTRIP = Math.ceil(H / (COLOR_CELL * STRIP_CELLS)), NBUCKET = 9 * NSTRIP;
+  // A work unit is up to 8 cells of one colour in one strip, so slower cores never hold a pass up for long.
+  const STRIP_CELLS = 2, NSTRIP = Math.ceil(H / (COLOR_CELL * STRIP_CELLS)), NCG = Math.ceil(Math.ceil(W / COLOR_CELL / 3) / 8), NBUCKET = 9 * NSTRIP * NCG;
   // Lockstep schedule, in ticks of P.dt (1/120 s). Fields are requested every FIELD_EVERY ticks (83 ms) and applied
   // exactly FIELD_LAT ticks later; congestion snapshots ride every SNAP_EVERY ticks and checksums are taken every
   // CHECK_EVERY ticks (0.25 s); a field is refreshed at most every REFRESH ticks (0.5 s).
@@ -1053,7 +1059,7 @@ var SimCore = (function () {
       this.groups = new Array(MAX_GROUPS + 1).fill(null);
       this.time = 0; this.tick = 0; this.wakeAll = 0; this.wakeEvery = 8; this.steps = 0; this.acc = 0; this.L = P.speed * P.dt;
       this.speed = P.speed; this.rng = makeRng(1); this.seed = 1; this.lookBase = SIZES[0];
-      this.arrived = []; this.passIdx = new Int32Array(16); this.passKey = new Uint16Array(16); this.passStart = new Int32Array(NBUCKET + 1); this.passFill = new Int32Array(NBUCKET); this.passShuffle = 0; this.agentVersion = 1; this.sentVersion = 0; this.layoutVersion = 1; this.loading = false;
+      this.arrived = []; this.passIdx = new Int32Array(16); this.passKey = NBUCKET > 65535 ? new Uint32Array(16) : new Uint16Array(16); this.passStart = new Int32Array(NBUCKET + 1); this.passFill = new Int32Array(NBUCKET); this.passItems = new Int32Array(NBUCKET); this.passItemStart = new Int32Array(10); this.passShuffle = 0; this.agentVersion = 1; this.sentVersion = 0; this.layoutVersion = 1; this.loading = false;
       this.demandMark = new Uint8Array((MAX_GROUPS + 1) * NCLS * NSEC); this.demandEvery = 30;
       this.scene = { name: 'mixed', count: 10000 };
       this.st = { simMs: 0, upkeepMs: 0, moveMs: 0, checks: 0, visits: 0, arrBins: [], arrBin: 0, binEnd: 1, waits: 0 };
@@ -1117,11 +1123,26 @@ var SimCore = (function () {
     }
     // Re-sort agent storage by 4 x 4-tile block so neighbours sit next to each other in memory.
     // One loop per array keeps every typed-array access monomorphic.
-    reorder() {
+    computeOrder() {
       const M = this.M, o = this.ord, key = this.keys, cnt = new Int32Array(65537);
       for (let a = 0; a < M; a++) { const k = ((this.ay[a] | 0) >> 2) * 256 + ((this.ax[a] | 0) >> 2); key[a] = k; cnt[k + 1]++; }
       for (let k = 0; k < 65536; k++) cnt[k + 1] += cnt[k];
       for (let a = 0; a < M; a++) o[cnt[key[a]]++] = a;
+    }
+    permuteOne(i) { // one per-agent array into the new order (threaded re-sort)
+      const arr = this[PERM[i]], o = this.ord, M = this.M, tmp = this.permTmp || (this.permTmp = {});
+      let t = tmp[PERM[i]]; if (!t || t.length < M) t = tmp[PERM[i]] = new arr.constructor(Math.max(M, 1024));
+      for (let j = 0; j < M; j++) t[j] = arr[o[j]];
+      arr.set(t.subarray(0, M));
+    }
+    finishOrder() { // the maps that follow from the permuted ids
+      const M = this.M, id = this.idOf, so = this.slotOf, ud = this.aUid, us = this.uidSlot;
+      for (let j = 0; j < M; j++) so[id[j]] = j;
+      for (let j = 0; j < M; j++) us[ud[j]] = j;
+    }
+    reorder() {
+      const M = this.M, o = this.ord;
+      this.computeOrder();
       const f64 = this.tmpF64, f32 = this.tmpF32, i32 = this.tmpI32, u16 = this.tmpU16, i8 = this.tmpI8, u8 = this.tmpU8;
       const xs = this.ax; for (let j = 0; j < M; j++) f64[j] = xs[o[j]]; xs.set(f64.subarray(0, M));
       const ys = this.ay; for (let j = 0; j < M; j++) f64[j] = ys[o[j]]; ys.set(f64.subarray(0, M));
@@ -1163,7 +1184,12 @@ var SimCore = (function () {
         case 'bench': this.startBench(m.counts); break;
         case 'threads': {
           if (!this.order) { this.post({ type: 'threads', n: 1 }); break; }
-          this.spawnFn = () => new Worker(m.url);
+          this.spawnFn = () => {
+            const w = new Worker(m.url); w.ready = false;
+            w.onmessage = (e) => this.onHelperMessage(w, e.data);
+            w.onerror = (e) => { e.preventDefault(); this.onHelperMessage(w, { type: 'helperError', text: e.message || 'could not start' }); };
+            return w;
+          };
           const got = this.setThreads(m.n, this.spawnFn);
           this.post({ type: 'threads', n: got || 1 });
           if (m.n > 1 && !got) this.post({ type: 'notice', text: 'Shared memory is not available here, so the simulation stays on one thread.' });
@@ -1275,7 +1301,8 @@ var SimCore = (function () {
     }
 
     // ------------------------------------------------------------- hashed grid
-    rebuildGrid() {
+    // Agent counts per level and table sizes; allocations happen here, before any thread touches the grid.
+    prepareGrid() {
       const M = this.M, lv = this.lv;
       for (const l of lv) l.n = 0;
       for (let a = 0; a < M; a++) lv[this.aLv[a]].n++;
@@ -1283,8 +1310,12 @@ var SimCore = (function () {
         let want = 4096; while (want < l.n * 4) want *= 2;
         if (want !== l.T) { l.T = want; l.mask = want - 1; l.start = new Int32Array(want + 1); l.count = new Int32Array(want); l.fill = new Int32Array(want); }
         if (l.agents.length < l.n) { const z = Math.max(l.n, l.agents.length * 2); l.agents = new Int32Array(z); l.px = new Float64Array(z); l.py = new Float64Array(z); l.pr = new Float64Array(z); }
-        l.count.fill(0);
       }
+    }
+    rebuildGrid() {
+      const M = this.M, lv = this.lv;
+      this.prepareGrid();
+      for (const l of lv) l.count.fill(0);
       for (let a = 0; a < M; a++) {
         const l = lv[this.aLv[a]];
         const b = hashBin(Math.floor(this.ax[a] * l.inv), Math.floor(this.ay[a] * l.inv), l.mask);
@@ -1297,6 +1328,38 @@ var SimCore = (function () {
       }
       // Positions and radii are copied in bucket order so scans read memory sequentially.
       for (let a = 0; a < M; a++) { const l = lv[this.aLv[a]], j = l.fill[this.aB[a]]++; l.agents[j] = a; l.px[j] = this.ax[a]; l.py[j] = this.ay[a]; l.pr[j] = this.aR[a]; }
+    }
+    // Threaded grid build. Item i < G0 is a range of level 0's buckets; the last two items are levels 1 and 2 whole.
+    // Each item handles only agents whose bucket is in its range, in index order, so every bucket lists its agents in
+    // index order exactly as rebuildGrid does.
+    gridItem(i) {
+      const G0 = this.gridG0;
+      if (i < G0) { const T = this.lv[0].T; return [0, Math.floor(T * i / G0), Math.floor(T * (i + 1) / G0)]; }
+      const k = i - G0 + 1; return [k, 0, this.lv[k].T];
+    }
+    gridCount(i) {
+      const [k, b0, b1] = this.gridItem(i), l = this.lv[k], M = this.M, ax = this.ax, ay = this.ay, aLv = this.aLv, aB = this.aB, cnt = l.count, inv = l.inv, mask = l.mask;
+      cnt.fill(0, b0, b1);
+      let tot = 0;
+      for (let a = 0; a < M; a++) {
+        if (aLv[a] !== k) continue;
+        const b = hashBin(Math.floor(ax[a] * inv), Math.floor(ay[a] * inv), mask);
+        if (b < b0 || b >= b1) continue;
+        aB[a] = b; cnt[b]++; tot++;
+      }
+      Atomics.store(this.ctl, 20 + i, tot);
+    }
+    gridFill(i) {
+      const [k, b0, b1] = this.gridItem(i), l = this.lv[k], st = l.start, cnt = l.count, fill = l.fill;
+      let s = Atomics.load(this.ctl, 20 + i); // where this range starts in the level's agent list
+      for (let b = b0; b < b1; b++) { st[b] = s; fill[b] = s; s += cnt[b]; }
+      if (b1 === l.T) st[l.T] = s;
+      const M = this.M, aLv = this.aLv, aB = this.aB, ag = l.agents, px = l.px, py = l.py, pr = l.pr, ax = this.ax, ay = this.ay, aR = this.aR;
+      for (let a = 0; a < M; a++) {
+        if (aLv[a] !== k) continue;
+        const b = aB[a]; if (b < b0 || b >= b1) continue;
+        const j = fill[b]++; ag[j] = a; px[j] = ax[a]; py[j] = ay[a]; pr[j] = aR[a];
+      }
     }
     // Everything a move of length L by agent a could touch, from every grid level, into rx/ry/rd/rc. The hash keeps the
     // 8 bins of a row inside an 8 x 8 block in consecutive buckets, so each block row is one contiguous range of agents:
@@ -1465,21 +1528,20 @@ var SimCore = (function () {
       if (vx > 0) F[b] += w * vx; else F[b + 1] -= w * vx;
       if (vy > 0) F[b + 2] += w * vy; else F[b + 3] -= w * vy;
     }
-    congestion(dt) {
-      const gdt = P.gain * dt, M = this.M, r0 = SIZES[0];
-      for (let a = 0; a < M; a++) {
-        const x = this.ax[a], y = this.ay[a], r = this.aR[a], cx = x | 0, cy = y | 0, vx = this.aVX[a], vy = this.aVY[a];
-        const w = gdt * (r / r0) * (r / r0); // a big agent counts as the small agents it displaces
-        this.secActive[(cy >> 5) * NSX + (cx >> 5)] = this.time;
-        if (r <= 0.35) { this.addCong(cy * W + cx, w, vx, vy); continue; }
-        let k = 0; // spread over the tiles whose centres it covers
-        const ty0 = Math.max(0, Math.floor(y - r)), ty1 = Math.min(H - 1, Math.floor(y + r)), tx0 = Math.max(0, Math.floor(x - r)), tx1 = Math.min(W - 1, Math.floor(x + r));
-        for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) { const ex = tx + 0.5 - x, ey = ty + 0.5 - y; if (ex * ex + ey * ey <= r * r) k++; }
-        if (!k) { this.addCong(cy * W + cx, w, vx, vy); continue; }
-        for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
-          const ex = tx + 0.5 - x, ey = ty + 0.5 - y;
-          if (ex * ex + ey * ey <= r * r) { this.addCong(ty * W + tx, w / k, vx, vy); this.secActive[(ty >> 5) * NSX + (tx >> 5)] = this.time; }
-        }
+    congestion(dt) { const gdt = P.gain * dt; for (let a = 0, M = this.M; a < M; a++) this.congAgent(a, gdt); }
+    // One agent's congestion: its footprint reaches at most about 2.5 tiles, so same-colour cells never share a tile.
+    congAgent(a, gdt) {
+      const r0 = SIZES[0], x = this.ax[a], y = this.ay[a], r = this.aR[a], cx = x | 0, cy = y | 0, vx = this.aVX[a], vy = this.aVY[a];
+      const w = gdt * (r / r0) * (r / r0); // a big agent counts as the small agents it displaces
+      this.secActive[(cy >> 5) * NSX + (cx >> 5)] = this.time;
+      if (r <= 0.35) { this.addCong(cy * W + cx, w, vx, vy); return; }
+      let k = 0; // spread over the tiles whose centres it covers
+      const ty0 = Math.max(0, Math.floor(y - r)), ty1 = Math.min(H - 1, Math.floor(y + r)), tx0 = Math.max(0, Math.floor(x - r)), tx1 = Math.min(W - 1, Math.floor(x + r));
+      for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) { const ex = tx + 0.5 - x, ey = ty + 0.5 - y; if (ex * ex + ey * ey <= r * r) k++; }
+      if (!k) { this.addCong(cy * W + cx, w, vx, vy); return; }
+      for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+        const ex = tx + 0.5 - x, ey = ty + 0.5 - y;
+        if (ex * ex + ey * ey <= r * r) { this.addCong(ty * W + tx, w / k, vx, vy); this.secActive[(ty >> 5) * NSX + (tx >> 5)] = this.time; }
       }
     }
     oncoming(c, dx, dy) {
@@ -1555,19 +1617,39 @@ var SimCore = (function () {
       this.ax[a] = px; this.ay[a] = py; this.aStuck[a] = 0; this.aSleep[a] = 0; this.moved++;
       this.stampAround(px, py, this.aR[a]);
     }
+    substepSerial(L, dts) {
+      if (this.tick % REORDER_EVERY === 0) { const tr = now(); this.reorder(); this.cnt.other += now() - tr; }
+      let t0 = now();
+      if (this.structure === 1) this.bvUpdate(L); else this.rebuildGrid();
+      this.cnt.upkeep += now() - t0;
+      if (this.order === 0) { // classic order
+        t0 = now(); this.congestion(dts); this.cnt.cong += now() - t0;
+        this.tick++; this.moved = 0;
+        t0 = now(); for (let a = 0; a < this.M; a++) this.moveAgent(a, L, dts); this.cnt.moves += now() - t0;
+        return;
+      }
+      t0 = now(); this.buildPasses(); this.cnt.passes += now() - t0;
+      const pi = this.passIdx, e = this.passStart[NBUCKET], gdt = P.gain * dts;
+      t0 = now(); for (let j = 0; j < e; j++) this.congAgent(pi[j], gdt); this.cnt.cong += now() - t0; // colour by colour, unit by unit
+      this.tick++; this.moved = 0;
+      t0 = now(); for (let j = 0; j < e; j++) this.moveAgent(pi[j], L, dts); this.cnt.moves += now() - t0;
+    }
     // Stable counting sort of agents by the colour of their 4-tile cell at the start of the substep.
+    ensurePasses() { const M = this.M; if (this.passIdx.length < M) { const z = Math.max(M, this.passIdx.length * 2); this.passIdx = new Int32Array(z); this.passKey = NBUCKET > 65535 ? new Uint32Array(z) : new Uint16Array(z); } }
     buildPasses() {
-      const M = this.M;
-      if (this.passIdx.length < M) { const z = Math.max(M, this.passIdx.length * 2); this.passIdx = new Int32Array(z); this.passKey = new Uint16Array(z); }
+      const M = this.M; this.ensurePasses();
       const ps = this.passStart, key = this.passKey, pi = this.passIdx, ax = this.ax, ay = this.ay; ps.fill(0);
       for (let a = 0; a < M; a++) {
-        const gx = (ax[a] * INV_CC) | 0, gy = (ay[a] * INV_CC) | 0, k = ((gx % 3) + 3 * (gy % 3)) * NSTRIP + ((gy / STRIP_CELLS) | 0);
+        const gx = (ax[a] * INV_CC) | 0, gy = (ay[a] * INV_CC) | 0, k = (((gx % 3) + 3 * (gy % 3)) * NSTRIP + ((gy / STRIP_CELLS) | 0)) * NCG + (((gx / 3) | 0) >> 3);
         key[a] = k; ps[k + 1]++;
       }
       for (let k = 0; k < NBUCKET; k++) ps[k + 1] += ps[k];
       const fill = this.passFill; fill.set(ps.subarray(0, NBUCKET));
       for (let a = 0; a < M; a++) pi[fill[key[a]]++] = a;
       if (this.passShuffle) this.shufflePasses();
+      const it = this.passItems, is = this.passItemStart, per = NSTRIP * NCG; let n = 0; // non-empty work units per colour
+      for (let c = 0; c < 9; c++) { is[c] = n; for (let b = c * per, e = b + per; b < e; b++) if (ps[b + 1] > ps[b]) it[n++] = b; }
+      is[9] = n;
     }
     // Test only: visit the cells of each pass in a scrambled order (agents inside a cell keep their order), as threads
     // splitting a pass would. Results must not change.
@@ -1683,21 +1765,7 @@ var SimCore = (function () {
       const L0 = this.speed * P.dt, sub = Math.max(1, Math.ceil(L0 / (SIZES[0] / 4) - 1e-9)), dts = P.dt / sub, L = L0 / sub;
       this.L = L;
       for (let s = 0; s < sub; s++) {
-        if (this.tick % REORDER_EVERY === 0) { const tr = now(); this.reorder(); this.cnt.other += now() - tr; }
-        let t0 = now();
-        if (this.structure === 1) this.bvUpdate(L); else this.rebuildGrid();
-        this.cnt.upkeep += now() - t0;
-        { const tc = now(); this.congestion(dts); this.cnt.cong += now() - tc; }
-        this.tick++; this.moved = 0;
-        t0 = now();
-        if (this.order === 0) { for (let a = 0; a < this.M; a++) this.moveAgent(a, L, dts); }
-        else {
-        { const tp = now(); this.buildPasses(); this.cnt.passes += now() - tp; t0 = now(); }
-        const pi = this.passIdx, ps = this.passStart;
-        if (this.threads > 1 && this.structure === 0 && this.movePassesThreaded(L, dts)) { /* done on all threads */ }
-        else for (let j = 0, e = ps[NBUCKET]; j < e; j++) this.moveAgent(pi[j], L, dts); // colour by colour, strip by strip
-        }
-        this.cnt.moves += now() - t0;
+        if (!(this.order === 1 && this.threads > 1 && this.structure === 0 && this.substepThreaded(L, dts))) this.substepSerial(L, dts);
         if (this.arrived.length) { const tr = now(), u = this.aUid; this.arrived.sort((p, q) => u[p] - u[q]); this.respawnArrived(); this.cnt.other += now() - tr; }
         this.time += dts;
       }
@@ -1729,15 +1797,33 @@ var SimCore = (function () {
       this.pool = Pl; for (let i = n1 - 1; i >= n0; i--) this.poolFree.push(i);
       for (const g of this.groups) if (g) for (const arr of g.slots) for (const sl of arr) if (sl && sl.pi >= 0) { const o = sl.pi * 2048; sl.fx = Pl.subarray(o, o + 1024); sl.fy = Pl.subarray(o + 1024, o + 2048); }
     }
-    // n threads in all (the coordinator is one of them); spawn(i) returns a helper with postMessage and terminate.
-    // n threads in all (the coordinator is one of them); spawn(i) returns a helper with postMessage and terminate.
-    // Helpers stay alive when the count drops, so switching is instant; every change resends all shared arrays and
-    // the full group and slot log, so a helper that sat idle starts from the current state.
+    // Request n threads in all (the coordinator is one of them); spawn(i) returns a helper with postMessage and
+    // terminate. A new count takes effect only once every helper it needs has reported ready, because a worker
+    // started from a worker may need its parent to stay responsive while it loads. Until then the simulation keeps
+    // its current count, which changes nothing but speed. Helpers stay alive when the count drops.
     setThreads(n, spawn) {
+      this.wantThreads = n > 1 ? n : 0;
+      if (!(n > 1) || typeof SharedArrayBuffer === 'undefined' || typeof Atomics === 'undefined' || !spawn) { this.threads = 0; this.hlog = []; this.sharedSent = {}; return 0; }
+      while (this.helpers.length < n - 1) this.helpers.push(spawn(this.helpers.length));
+      return this.activateThreads();
+    }
+    helpersReady(k) { for (let i = 0; i < k; i++) if (!this.helpers[i] || !this.helpers[i].ready) return false; return true; }
+    onHelperMessage(w, d) {
+      if (d && d.type === 'ready') {
+        w.ready = true;
+        if (this.bench && this.bench.waiting && this.helpersReady(this.bench.need)) this.beginBench();
+        else if (this.wantThreads > 1 && this.threads !== this.wantThreads && this.activateThreads() === this.wantThreads) this.post({ type: 'threads', n: this.threads });
+      } else if (d && d.type === 'helperError') this.dropThreads('A simulation helper failed (' + d.text + '), so the simulation is back on one thread.');
+    }
+    // Every change resends all shared arrays and the full group and slot log, so a helper that sat idle starts from
+    // the current state.
+    activateThreads() {
+      const n = this.wantThreads;
+      if (!(n > 1) || !this.helpersReady(n - 1)) return this.threads;
       this.hlog = []; this.sharedSent = {};
-      if (!(n > 1) || typeof SharedArrayBuffer === 'undefined' || typeof Atomics === 'undefined' || !spawn) { this.threads = 0; return 0; }
       if (!this.pool) this.growPool();
       if (!this.ctl) this.ctl = new Int32Array(new SharedArrayBuffer(64 * 4));
+      Atomics.store(this.ctl, 12, 0);
       this.hlog.push(['reset']);
       for (let id = 1; id <= MAX_GROUPS; id++) {
         const g = this.groups[id]; if (!g) continue;
@@ -1748,7 +1834,6 @@ var SimCore = (function () {
           this.hlog.push(['s', id, c, si, sl.pi]);
         }
       }
-      while (this.helpers.length < n - 1) this.helpers.push(spawn(this.helpers.length));
       this.threads = n;
       return n;
     }
@@ -1757,13 +1842,20 @@ var SimCore = (function () {
     // but speed. Each count runs twice, in forward then reverse order, to cancel the crowd's drift.
     startBench(counts) {
       if (!this.spawnFn || !this.order || this.structure !== 0) { this.post({ type: 'bench', error: 'Thread scaling needs shared memory, the colour update order and the hashed grid.' }); return; }
-      const seq = counts.concat(counts.slice().reverse());
-      this.bench = { seq, i: 0, left: BENCH_WARM, keep: Math.max(1, this.threads), samples: new Map(), acc: null };
-      this.setThreads(seq[0], this.spawnFn);
-      this.post({ type: 'benchProgress', n: seq[0], i: 1, of: seq.length });
+      const seq = counts.concat(counts.slice().reverse()), need = Math.max(...counts) - 1;
+      this.bench = { seq, i: 0, left: BENCH_WARM, keep: Math.max(1, this.wantThreads || this.threads), samples: new Map(), acc: null, waiting: true, need };
+      while (this.helpers.length < need) this.helpers.push(this.spawnFn(this.helpers.length));
+      this.post({ type: 'benchProgress', n: 0, i: 0, of: seq.length });
+      if (this.helpersReady(need)) this.beginBench();
+    }
+    beginBench() {
+      const b = this.bench; b.waiting = false;
+      this.setThreads(b.seq[0], this.spawnFn);
+      this.post({ type: 'benchProgress', n: b.seq[0], i: 1, of: b.seq.length });
     }
     benchTick(d) { // d: this tick's step, moves, upkeep, congestion, pass setup and other times
       const b = this.bench;
+      if (b.waiting) return; // helpers still starting
       if (b.left > 0) { b.left--; return; } // warm-up after a switch
       const a = b.acc || (b.acc = [0, 0, 0, 0, 0, 0, 0]);
       for (let i = 0; i < 6; i++) a[i] += d[i];
@@ -1787,41 +1879,79 @@ var SimCore = (function () {
       put('arrBuf', this.arrBuf); put('pool', this.pool); put('ctl', this.ctl);
       return att;
     }
-    movePassesThreaded(L, dts) {
-      const att = this.shareAll(), ctl = this.ctl, nh = this.threads - 1, gen0 = Atomics.load(ctl, 0);
-      const sc = { tick: this.tick, time: this.time, L, dts, wakeEvery: this.wakeEvery, wakeAll: this.wakeAll, lookBase: this.lookBase, seed: this.seed, M: this.M, gen0,
-        lv: this.lv.map((l) => [l.n, l.mask, l.inv, l.maxR, l.T]) };
+    // The whole substep on all threads, phase by phase; the same steps in the same order as substepSerial.
+    // Returns false, with nothing done, if a helper never joins.
+    substepThreaded(L, dts) {
+      const ctl = this.ctl, nh = this.threads - 1, doSort = this.tick % REORDER_EVERY === 0, G0 = Math.min(32, this.threads);
+      this.prepareGrid(); this.ensurePasses(); // allocations first: helpers get every array with this message
+      const att = this.shareAll(), gen0 = Atomics.load(ctl, 0);
+      this.L = L; this.dts = dts; this.gdt = P.gain * dts; this.gridG0 = G0;
+      const sc = { tick: this.tick + 1, time: this.time, L, dts, wakeEvery: this.wakeEvery, wakeAll: this.wakeAll, lookBase: this.lookBase, seed: this.seed, M: this.M, gen0, G0,
+        lv: this.lv.map((l) => [l.mask, l.inv, l.maxR, l.T]) };
       for (let i = 4; i < 9; i++) Atomics.store(ctl, i, 0);
       const msg = { type: 'sub', att, log: this.hlog, sc };
       for (let i = 0; i < nh; i++) this.helpers[i].postMessage(msg);
       this.hlog = [];
-      let v; const t0 = now();
-      while ((v = Atomics.load(ctl, 8)) < nh) { // every helper has joined; nothing has moved yet if one never does
-        if (now() - t0 > 3000) { this.dropThreads('The simulation helpers did not start, so the simulation is back on one thread.'); return false; }
+      let v; const tj = now();
+      while ((v = Atomics.load(ctl, 8)) < nh) {
+        if (Atomics.load(ctl, 12)) { this.dropThreads('A simulation helper failed, so the simulation is back on one thread.'); return false; }
+        if (now() - tj > 20000) { this.dropThreads('The simulation helpers did not start, so the simulation is back on one thread.'); return false; }
         Atomics.wait(ctl, 8, v, 100);
       }
+      let t0 = now();
+      if (doSort) { this.computeOrder(); this.phase(PH_PERM, 0, 0, PERM.length); this.finishOrder(); this.cnt.other += now() - t0; }
+      t0 = now();
+      const nG = G0 + 2;
+      this.phase(PH_GCOUNT, 0, 0, nG);
+      const base = [0, 0, 0];
+      for (let i = 0; i < nG; i++) { const k = i < G0 ? 0 : i - G0 + 1, t = ctl[20 + i]; ctl[20 + i] = base[k]; base[k] += t; }
+      for (let k = 0; k < 3; k++) { this.lv[k].n = base[k]; Atomics.store(ctl, 16 + k, base[k]); }
+      this.phase(PH_GFILL, 0, 0, nG);
+      this.cnt.upkeep += now() - t0;
+      t0 = now(); this.buildPasses(); this.cnt.passes += now() - t0;
+      const is = this.passItemStart;
+      t0 = now(); for (let c = 0; c < 9; c++) this.phase(PH_CONG, c, is[c], is[c + 1]); this.cnt.cong += now() - t0;
+      this.tick++; this.moved = 0;
       const keep = this.arrived, ab = this.arrBuf;
       this.arrived = { push: (a) => { ab[Atomics.add(ctl, 4, 1)] = a; } };
-      for (let c = 0; c < 9; c++) {
-        Atomics.store(ctl, 2, c * NSTRIP); Atomics.store(ctl, 3, 0); Atomics.store(ctl, 1, c);
-        Atomics.add(ctl, 0, 1); Atomics.notify(ctl, 0);
-        this.runStrips(c, ctl, L, dts);
-        Atomics.add(ctl, 3, 1);
-        const t1 = now();
-        while ((v = Atomics.load(ctl, 3)) < nh + 1) {
-          if (now() - t1 > 5000) { this.arrived = keep; this.dropThreads('A simulation helper stopped mid-pass; back on one thread (checksums will show if the state was affected).'); return true; }
-          Atomics.wait(ctl, 3, v, 100);
-        }
-      }
+      t0 = now(); for (let c = 0; c < 9; c++) this.phase(PH_MOVE, c, is[c], is[c + 1]); this.cnt.moves += now() - t0;
+      Atomics.store(ctl, 1, PH_END); Atomics.add(ctl, 0, 1); Atomics.notify(ctl, 0); // helpers go back to waiting for messages
       this.arrived = keep;
       for (let i = 0, na = Atomics.load(ctl, 4); i < na; i++) keep.push(ab[i]);
       this.moved += Atomics.load(ctl, 5); this.cnt.queries += Atomics.load(ctl, 6); this.cnt.checks += Atomics.load(ctl, 7);
       return true;
     }
-    dropThreads(text) { this.stopHelpers(); this.bench = null; this.post({ type: 'threads', n: 1 }); this.post({ type: 'notice', text }); }
-    runStrips(c, ctl, L, dts) { // take strips of pass c until none are left
-      const pi = this.passIdx, ps = this.passStart, end = (c + 1) * NSTRIP;
-      for (let s = Atomics.add(ctl, 2, 1); s < end; s = Atomics.add(ctl, 2, 1)) for (let j = ps[s], e = ps[s + 1]; j < e; j++) this.moveAgent(pi[j], L, dts);
+    phase(code, param, start, end) {
+      const ctl = this.ctl, nh = this.threads - 1;
+      Atomics.store(ctl, 1, code); Atomics.store(ctl, 10, param); Atomics.store(ctl, 2, start); Atomics.store(ctl, 9, end); Atomics.store(ctl, 3, 0);
+      Atomics.add(ctl, 0, 1); Atomics.notify(ctl, 0);
+      this.runItems(code, param);
+      Atomics.add(ctl, 3, 1);
+      let v; const t1 = now();
+      while ((v = Atomics.load(ctl, 3)) < nh + 1) {
+        if (Atomics.load(ctl, 12)) { this.dropThreads('A simulation helper failed mid-substep; back on one thread (checksums will show if the state was affected).'); return; }
+        if (now() - t1 > 30000) { this.dropThreads('A simulation helper stopped mid-substep; back on one thread (checksums will show if the state was affected).'); return; }
+        Atomics.wait(ctl, 3, v, 100);
+      }
+    }
+    runItems(code, param) { // take work items of the current phase until none are left
+      const ctl = this.ctl, end = Atomics.load(ctl, 9);
+      for (let i = Atomics.add(ctl, 2, 1); i < end; i = Atomics.add(ctl, 2, 1)) this.doItem(code, i);
+    }
+    doItem(code, i) {
+      if (code === PH_MOVE || code === PH_CONG) {
+        const b = this.passItems[i], pi = this.passIdx, ps = this.passStart, e = ps[b + 1];
+        if (code === PH_MOVE) { const L = this.L, dts = this.dts; for (let j = ps[b]; j < e; j++) this.moveAgent(pi[j], L, dts); }
+        else { const gdt = this.gdt; for (let j = ps[b]; j < e; j++) this.congAgent(pi[j], gdt); }
+      } else if (code === PH_GCOUNT) this.gridCount(i);
+      else if (code === PH_GFILL) this.gridFill(i);
+      else if (code === PH_PERM) this.permuteOne(i);
+    }
+    dropThreads(text) {
+      const benching = !!this.bench;
+      this.stopHelpers(); this.wantThreads = 0; this.bench = null;
+      this.post({ type: 'threads', n: 1 }); this.post({ type: 'notice', text });
+      if (benching) this.post({ type: 'bench', error: 'The measurement stopped: ' + text });
     }
     // ------------------------------------------------------------- lockstep
     // Advance tick by tick up to the granted horizon. A tick first applies the field batch due now (or waits for it),
@@ -1839,7 +1969,7 @@ var SimCore = (function () {
         if (this.bench) {
           const c = this.cnt, c0 = [c.step, c.moves, c.upkeep, c.cong, c.passes, c.other];
           this.step(); steps++;
-          this.benchTick([c.step - c0[0], c.moves - c0[1], c.upkeep - c0[2], c.cong - c0[3], c.passes - c0[4], c.other - c0[5]]);
+          if (this.bench) this.benchTick([c.step - c0[0], c.moves - c0[1], c.upkeep - c0[2], c.cong - c0[3], c.passes - c0[4], c.other - c0[5]]);
         } else { this.step(); steps++; }
         if (this.steps % CHECK_EVERY === 0) { const h = this.checksum(); this.checks.push([this.steps, h[0], h[1]]); }
         if (now() - t0 > 40) break; // pacing only
@@ -2141,19 +2271,31 @@ var SimCore = (function () {
         else if (e[0] === 's') { const g = h.groups[e[1]]; if (g) g.slots[e[2]][e[3]] = e[4] >= 0 ? view(e[4]) : null; }
       }
       const sc = m.sc, ctl = h.ctl, ab = h.arrBuf;
-      h.tick = sc.tick; h.time = sc.time; h.L = sc.L; h.wakeEvery = sc.wakeEvery; h.wakeAll = sc.wakeAll; h.lookBase = sc.lookBase; h.seed = sc.seed; h.M = sc.M;
-      for (let i = 0; i < 3; i++) { const l = h.lv[i], q = sc.lv[i]; l.n = q[0]; l.mask = q[1]; l.inv = q[2]; l.maxR = q[3]; l.T = q[4]; }
+      h.tick = sc.tick; h.time = sc.time; h.L = sc.L; h.dts = sc.dts; h.gdt = P.gain * sc.dts; h.gridG0 = sc.G0;
+      h.wakeEvery = sc.wakeEvery; h.wakeAll = sc.wakeAll; h.lookBase = sc.lookBase; h.seed = sc.seed; h.M = sc.M;
+      for (let i = 0; i < 3; i++) { const l = h.lv[i], q = sc.lv[i]; l.mask = q[0]; l.inv = q[1]; l.maxR = q[2]; l.T = q[3]; }
       h.arrived = { push: (a) => { ab[Atomics.add(ctl, 4, 1)] = a; } };
       h.moved = 0; h.cnt.queries = 0; h.cnt.checks = 0;
       Atomics.add(ctl, 8, 1); Atomics.notify(ctl, 8);
-      for (let c = 0; c < 9; c++) {
-        let v; while ((v = Atomics.load(ctl, 0)) < sc.gen0 + c + 1) Atomics.wait(ctl, 0, v, 100);
-        h.runStrips(c, ctl, sc.L, sc.dts);
-        if (c === 8) { Atomics.add(ctl, 5, h.moved); Atomics.add(ctl, 6, h.cnt.queries); Atomics.add(ctl, 7, h.cnt.checks); }
+      for (let gen = sc.gen0; ;) {
+        let v; while ((v = Atomics.load(ctl, 0)) <= gen) Atomics.wait(ctl, 0, v, 100);
+        gen = v;
+        const code = Atomics.load(ctl, 1);
+        if (code === PH_END) break;
+        const param = Atomics.load(ctl, 10);
+        if (code === PH_MOVE || code === PH_CONG) for (let k = 0; k < 3; k++) h.lv[k].n = Atomics.load(ctl, 16 + k);
+        h.runItems(code, param);
+        if (code === PH_MOVE && param === 8) { Atomics.add(ctl, 5, h.moved); Atomics.add(ctl, 6, h.cnt.queries); Atomics.add(ctl, 7, h.cnt.checks); }
         Atomics.add(ctl, 3, 1); Atomics.notify(ctl, 3);
       }
     };
-    return { handle };
+    const safe = (m, post) => {
+      try { handle(m); } catch (err) {
+        if (h.ctl) { Atomics.store(h.ctl, 12, 1); Atomics.notify(h.ctl, 3); Atomics.notify(h.ctl, 8); }
+        post({ type: 'helperError', text: String((err && err.message) || err) });
+      }
+    };
+    return { handle, safe };
   };
   return SimCore;
 })();
@@ -2435,7 +2577,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
     const order = self.crossOriginIsolated ? 1 : 0; sendSim({ type: 'order', v: order }); sendB({ type: 'order', v: order });
     mode = 'workers, 2 peers';
     // Simulation helpers: the same simulation code, started by each peer's simulation worker as nested workers.
-    helperUrl = URL.createObjectURL(new Blob([srcShared + '\n' + srcSim + '\n;(function () { const h = SimCore.makeHelper(); onmessage = (e) => h.handle(e.data); })();'], { type: 'text/javascript' }));
+    helperUrl = URL.createObjectURL(new Blob([srcShared + '\n' + srcSim + '\n;(function () { const h = SimCore.makeHelper(); onmessage = (e) => h.safe(e.data, (m) => postMessage(m)); postMessage({ type: \'ready\' }); })();'], { type: 'text/javascript' }));
     setupThreads();
     return true;
   }
@@ -2451,14 +2593,14 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
     const out = $('benchOut'); out.textContent = ''; $('benchBtn').disabled = false; $('thrA').disabled = false;
     if (m.error) { out.textContent = m.error; return; }
     const base = m.rows.find((r) => r.n === 1) || m.rows[0], t = document.createElement('table'), head = t.createTHead().insertRow();
-    for (const h of ['Threads', 'ms per 1/60 s', 'Speed-up', 'Moves', 'Serial']) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = h; head.appendChild(th); }
+    for (const h of ['Threads', 'ms per 1/60 s', 'Speed-up', 'Moves', 'Congestion', 'Grid, sort, setup']) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = h; head.appendChild(th); }
     const body = t.createTBody();
     for (const r of m.rows) {
-      const tr = body.insertRow(), serial = r.upkeep + r.cong + r.passes + r.other;
-      for (const v of [String(r.n), r.step.toFixed(1), (base.step / r.step).toFixed(2) + '×', r.moves.toFixed(1), serial.toFixed(1)]) tr.insertCell().textContent = v;
+      const tr = body.insertRow(), rest = r.upkeep + r.passes + r.other;
+      for (const v of [String(r.n), r.step.toFixed(1), (base.step / r.step).toFixed(2) + '×', r.moves.toFixed(1), r.cong.toFixed(1), rest.toFixed(1)]) tr.insertCell().textContent = v;
     }
     const best = m.rows.reduce((x, r) => (r.step < x.step ? r : x)), p = document.createElement('p');
-    p.textContent = `Fastest: ${best.n} thread${best.n === 1 ? '' : 's'}, ${best.step.toFixed(1)} ms per 1/60 s, which is ${(16.67 / best.step).toFixed(2)}× real time. Serial is the grid rebuild, congestion, pass setup, re-sort and respawns, still on one thread. Peer B kept checking throughout.`;
+    p.textContent = `Fastest: ${best.n} thread${best.n === 1 ? '' : 's'}, ${best.step.toFixed(1)} ms per 1/60 s, which is ${(16.67 / best.step).toFixed(2)}× real time. Moves, congestion, the grid rebuild and the re-sort run on all threads; pass setup and respawns still run on one. Peer B kept checking throughout.`;
     out.append(t, p);
   }
   function setupThreads() {
@@ -2499,7 +2641,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
       case 'ordered': setFocus(m.g); break;
       case 'notice': toast(m.text); break;
       case 'threads': thrState.a = m.n; showThreads(); break;
-      case 'benchProgress': $('benchOut').textContent = `Measuring ${m.n} thread${m.n === 1 ? '' : 's'}: run ${m.i} of ${m.of}…`; break;
+      case 'benchProgress': $('benchOut').textContent = m.i ? `Measuring ${m.n} thread${m.n === 1 ? '' : 's'}: run ${m.i} of ${m.of}…` : 'Starting the helper threads…'; break;
       case 'bench': showBench(m); break;
     }
   }
