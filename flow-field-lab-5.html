@@ -1015,12 +1015,13 @@ var SimCore = (function () {
   // Per-agent arrays the re-sort permutes (the same list, in the same order, as the one-thread re-sort).
   const PERM = ['ax', 'ay', 'aVX', 'aVY', 'aStuck', 'aT0', 'aR', 'aTry', 'idOf', 'bvCell', 'aG', 'aSide', 'aSleep', 'aS', 'aC', 'aLv', 'bvLayer', 'aUid'];
   // Phases of a threaded substep: every thread takes work items of the current phase until none are left.
-  const PH_MOVE = 1, PH_CONG = 2, PH_GHASH = 3, PH_GSCATTER = 4, PH_PERM = 5, PH_GBUILD = 6, PH_PRIMAL = 7, PH_DUAL = 8, PH_END = 9, PH_COORD = 10, PH_CONTACTS = 11, PH_CCOPY = 12;
+  const PH_MOVE = 1, PH_CONG = 2, PH_GHASH = 3, PH_GSCATTER = 4, PH_PERM = 5, PH_GBUILD = 6, PH_PRIMAL = 7, PH_DUAL = 8, PH_END = 9, PH_COORD = 10, PH_CONTACTS = 11, PH_CCOPY = 12, PH_LCOUNT = 13, PH_LFILL = 14, PH_LSORT = 15, PH_STEER = 16;
   // Threaded physics: every array the per-body solve and the contact update read or write (positions are already shared)
   const PHYS_KEYS = ['aBud', 'aFE', 'aHd', 'aIn', 'aM', 'aSh', 'aTh', 'aTh0', 'aX0', 'aY0', 'aYT', 'aYX', 'aYY'];
   const COORD_KEYS = ['aTeam', 'aTVX', 'aTVY', 'aDVX', 'aDVY', 'aAv', 'aMwX', 'aMwY'];
-  const SOLVE_ITEM = 64, DUAL_CHUNK = 2048, COORD_CHUNK = 256, CONTACT_CHUNK = 256;
-  const CONTACT_KEYS = ['aRm', 'aCs', 'aSn', 'aW', 'wall', 'cPlan', 'cOff', 'cStat']; // also read or written by the threaded contact search // bodies per solve work item (at least), contacts per contact-update item
+  const SOLVE_ITEM = 64, DUAL_CHUNK = 2048, COORD_CHUNK = 256, CONTACT_CHUNK = 256, LIST_CHUNK = 4096, STEER_CHUNK = 512;
+  const STEER_KEYS = ['aThr', 'aG', 'aC']; // with the physics, coordination and contact keys: everything steering touches
+  const CONTACT_KEYS = ['aRm', 'aCs', 'aSn', 'aW', 'wall', 'cPlan', 'cOff', 'cStat', 'cMisc']; // also read or written by the threaded contact search // bodies per solve work item (at least), contacts per contact-update item
   const BENCH_WARM = 24, BENCH_TICKS = 48; // per measured run: ticks after a switch that are not timed, then timed ticks
   // A work unit is up to 8 cells of one colour in one strip, so slower cores never hold a pass up for long.
   const STRIP_CELLS = 2, NSTRIP = Math.ceil(H / (COLOR_CELL * STRIP_CELLS)), NCG = Math.ceil(Math.ceil(W / COLOR_CELL / 3) / 8), NBUCKET = 9 * NSTRIP * NCG;
@@ -1048,7 +1049,11 @@ var SimCore = (function () {
     const S = { nm: 0, nk: 0, capM: 0, capK: 0, hMask: 0, hK: null, hV: null, bStart: new Int32Array(1), bList: new Int32Array(16) };
     const grow = (F, cap, n) => { for (const k in F) { const a = new F[k](cap); if (S[k]) a.set(S[k].subarray(0, n)); S[k] = a; } };
     S.reset = () => { S.nm = 0; S.nk = 0; };
-    S.ensure = (cm, ck) => { if (S.capM < cm) { S.capM = cm; grow(MF, cm, S.nm); } if (S.capK < ck) { S.capK = ck; grow(KF, ck, S.nk); } };
+    S.ensure = (cm, ck) => { // by half again at a time, against the arrays' real lengths (staging regions lower capM and capK)
+      const lm = S.mA ? S.mA.length : 0, lk = S.kM ? S.kM.length : 0;
+      if (lm < cm) { S.capM = Math.max(cm, Math.ceil(1.5 * lm)); grow(MF, S.capM, Math.min(S.nm, lm)); } else S.capM = lm;
+      if (lk < ck) { S.capK = Math.max(ck, Math.ceil(1.5 * lk)); grow(KF, S.capK, Math.min(S.nk, lk)); } else S.capK = lk;
+    };
     S.addM = (a, b, key) => { if (S.nm >= S.capM) { if (S.fixed) throw CON_FULL; S.capM = Math.max(1024, S.capM * 2); grow(MF, S.capM, S.nm); } const m = S.nm++; S.mA[m] = a; S.mB[m] = b; S.mKey[m] = key; S.mK0[m] = S.nk; S.mN[m] = 0; return m; };
     S.addK = (m) => { if (S.nk >= S.capK) { if (S.fixed) throw CON_FULL; S.capK = Math.max(2048, S.capK * 2); grow(KF, S.capK, S.nk); } const k = S.nk++; S.kM[k] = m; S.mN[m]++; return k; };
     const hash = (key) => Math.imul((key % 4294967296) ^ Math.floor(key / 4294967296) * 0x27D4EB2F, 0x9E3779B1) >>> 0;
@@ -2000,15 +2005,15 @@ var SimCore = (function () {
       const b = this.bench;
       if (b.waiting) return; // helpers still starting
       if (b.left > 0) { b.left--; return; } // warm-up after a switch
-      const K = 9, a = b.acc || (b.acc = new Array(K + 1).fill(0)); // the last entry counts ticks
+      const K = 10, a = b.acc || (b.acc = new Array(K + 1).fill(0)); // the last entry counts ticks
       for (let i = 0; i < K; i++) a[i] += d[i];
       if (++a[K] < BENCH_TICKS) return;
       const n = b.seq[b.i]; if (!b.samples.has(n)) b.samples.set(n, []); b.samples.get(n).push(a);
       b.acc = null; b.i++;
       if (b.i < b.seq.length) { b.left = BENCH_WARM; this.setThreads(b.seq[b.i], this.spawnFn); this.post({ type: 'benchProgress', n: b.seq[b.i], i: b.i + 1, of: b.seq.length }); return; }
-      const names = ['step', 'moves', 'upkeep', 'cong', 'passes', 'other', 'solve', 'contacts', 'coord'];
+      const names = ['step', 'moves', 'upkeep', 'cong', 'passes', 'other', 'solve', 'contacts', 'coord', 'steer'];
       const rows = [...b.samples].sort((x, y) => x[0] - y[0]).map(([n, ss]) => {
-        const r = { n }; names.forEach((nm, i) => { r[nm] = ss.reduce((sum, q) => sum + q[i] / q[9] * 2, 0) / ss.length; }); return r;
+        const r = { n }; names.forEach((nm, i) => { r[nm] = ss.reduce((sum, q) => sum + q[i] / q[10] * 2, 0) / ss.length; }); return r;
       });
       this.bench = null; this.setThreads(b.keep, this.spawnFn);
       this.post({ type: 'threads', n: Math.max(1, this.threads) }); this.post({ type: 'bench', rows });
@@ -2138,6 +2143,8 @@ var SimCore = (function () {
       for (const k of SHARED_KEYS) this[k] = this.sharedCopy(this[k]);
       for (const k of PHYS_KEYS) this[k] = this.sharedCopy(this[k]);
       for (const k of COORD_KEYS) this[k] = this.sharedCopy(this[k]);
+      for (const k of STEER_KEYS) this[k] = this.sharedCopy(this[k]);
+      for (const k of ['aCs', 'aSn', 'aW']) this[k] = this.sharedCopy(this[k]);
     }
     sharePhysics() {
       const att = this.shareAll(), sent = this.sharedSent;
@@ -2145,6 +2152,7 @@ var SimCore = (function () {
       for (const k of PHYS_KEYS) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
       for (const k of COORD_KEYS) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
       for (const k of CONTACT_KEYS) if (this[k]) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
+      for (const k of STEER_KEYS) if (this[k]) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
       for (const k of ['sIdx', 'sItems', 'flowX', 'flowY']) if (this[k]) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
       this.cons.forEach((S, i) => { for (const f of Object.keys(S)) if (ArrayBuffer.isView(S[f])) { S[f] = this.sharedCopy(S[f]); put('cs' + i + '.' + f, S[f]); } });
       return att;
@@ -2216,6 +2224,8 @@ var SimCore = (function () {
       else if (code === PH_PERM) this.permuteOne(i);
       else if (code === PH_PRIMAL) { const it = this.sItems, idx = this.sIdx, dt = this.physDt; for (let j = it[2 * i], e = it[2 * i + 1]; j < e; j++) this.primal(idx[j], dt); }
       else if (code === PH_CONTACTS) this.contactsItem(i);
+      else if (code === PH_LCOUNT || code === PH_LFILL || code === PH_LSORT) this.listItem(code, i);
+      else if (code === PH_STEER) { const a1 = Math.min(this.M, (i + 1) * STEER_CHUNK), dt = this.physDt; for (let a = i * STEER_CHUNK; a < a1; a++) this.steer(a, dt); }
       else if (code === PH_CCOPY) this.copyItem(i);
       else if (code === PH_COORD) { const a0 = i * COORD_CHUNK, a1 = Math.min(this.M, a0 + COORD_CHUNK); for (let a = a0; a < a1; a++) this.coordAgent(a); }
       else if (code === PH_DUAL) { const k0 = i * DUAL_CHUNK; this.dualRange(k0, Math.min(this.conCur.nk, k0 + DUAL_CHUNK)); }
@@ -2237,7 +2247,9 @@ var SimCore = (function () {
     physicsStep(dt) {
       const M = this.M, ph = this.ph, ax = this.ax, ay = this.ay, th = this.aTh;
       if (ph.coord && (this.tick - 1) % 8 === 0) { const tc = now(); this.coordinate(); this.cnt.coord = (this.cnt.coord || 0) + now() - tc; } // 15 Hz
-      for (let a = 0; a < M; a++) this.steer(a, dt);
+      const tsr = now();
+      if (!(this.threads > 1 && M >= 2 * STEER_CHUNK && this.steerThreaded(dt))) for (let a = 0; a < M; a++) this.steer(a, dt);
+      this.cnt.steer = (this.cnt.steer || 0) + now() - tsr;
       let t0 = now(); this.buildContacts(dt); this.cnt.contacts = (this.cnt.contacts || 0) + now() - t0;
       if (ph.rot === 0) for (let a = 0; a < M; a++) if (this.aSh[a]) { this.aYT[a] = this.aTh0[a]; th[a] = this.aTh0[a]; } // keep orientation
       if (ph.start === 1) for (let a = 0; a < M; a++) { ax[a] = this.aYX[a]; ay[a] = this.aYY[a]; th[a] = this.aYT[a]; } // start from the inertial targets
@@ -2412,6 +2424,7 @@ var SimCore = (function () {
         this.aRm[a] = v; if (v > rmMax) rmMax = v;
       }
       this.cMargin = margin; this.cRmMax = rmMax; this.cDt = dt; this.deep = 0; this.nOver = 0;
+      this.cListed = false;
       if (!(this.threads > 1 && M >= 2 * CONTACT_CHUNK && this.contactsThreaded(dt))) {
         const n = Math.ceil(M / CONTACT_CHUNK); C.reset();
         if (!this.cLastM || this.cLastM.length < n) { this.cLastM = new Int32Array(n + 64); this.cLastK = new Int32Array(n + 64); }
@@ -2422,7 +2435,9 @@ var SimCore = (function () {
         }
         this.cLastN = n;
       }
-      C.buildLists(M);
+      else this.cListed = true;
+      if (!this.cListed) C.buildLists(M);
+      this.cListed = false;
       this.st.contacts = M ? C.nk / M : 0; this.st.deep = this.deep; this.st.over = this.nOver;
     }
     // One agent's contacts: every other agent once (the one with the higher index records the pair) and nearby walls.
@@ -2478,6 +2493,13 @@ var SimCore = (function () {
       }
       if (!this.conStage) { this.conStage = makeConSet(); this.cons.push(this.conStage); }
       this.conStage.ensure(mTot, kTot); this.conCur.ensure(mTot, kTot); // the copies need room too, before arrays are shared
+      { // and the per-body lists: every point appears in at most two lists
+        const C = this.conCur;
+        if (C.bStart.length < M + 1) C.bStart = new Int32Array(Math.max(M + 1, C.bStart.length * 2));
+        if (C.bList.length < 2 * kTot) C.bList = new Int32Array(Math.max(2 * kTot, Math.ceil(C.bList.length * 1.5)));
+        if (!C.fillTmp || C.fillTmp.length < M) C.fillTmp = new Int32Array(Math.max(M, 1024));
+        if (!this.cMisc) this.cMisc = new Int32Array(4);
+      }
       if (!this.beginSession({ dt, speed: this.speed, ph: this.ph, cur: this.cons.indexOf(this.conCur), prev: this.cons.indexOf(this.conPrev), nk: 0, hMask: this.conPrev.hMask, margin: this.cMargin, rmMax: this.cRmMax })) return false;
       plan = this.cPlan; const off = this.cOff, stat = this.cStat; // starting the session may have moved these into shared memory
       this.phase(PH_CONTACTS, 0, 0, n);
@@ -2493,10 +2515,43 @@ var SimCore = (function () {
       }
       this.cLastN = n;
       this.phase(PH_CCOPY, 0, 0, n);
-      this.endSession();
       if (!(this.threads > 1)) return false;
-      this.conCur.nm = mo; this.conCur.nk = ko; this.deep = deep; this.nOver = over;
+      const C = this.conCur; C.nm = mo; C.nk = ko; this.deep = deep; this.nOver = over;
+      // per-body lists on all threads: count both bodies of every point, prefix sums, scatter, then sort each body's
+      // short list by point, which is exactly the order the one-thread build fills them in
+      const st = C.bStart, nl = Math.ceil(ko / LIST_CHUNK); this.cMisc[0] = ko; st.fill(0, 0, M + 1);
+      this.phase(PH_LCOUNT, 0, 0, nl);
+      for (let a = 0; a < M; a++) st[a + 1] += st[a];
+      C.fillTmp.set(st.subarray(0, M));
+      this.phase(PH_LFILL, 0, 0, nl);
+      this.phase(PH_LSORT, 0, 0, Math.ceil(M / 1024));
+      this.endSession();
+      if (!(this.threads > 1)) { C.buildLists(M); return true; }
+      this.cListed = true;
       return true;
+    }
+    listItem(code, i) {
+      const C = this.conCur, st = C.bStart, bl = C.bList, kM = C.kM, mA = C.mA, mB = C.mB;
+      if (code === PH_LSORT) {
+        const a1 = Math.min(this.M, (i + 1) * 1024);
+        for (let a = i * 1024; a < a1; a++) for (let j = st[a] + 1, e = st[a + 1]; j < e; j++) { const v = bl[j]; let q = j - 1; while (q >= st[a] && bl[q] > v) { bl[q + 1] = bl[q]; q--; } bl[q + 1] = v; }
+        return;
+      }
+      const k0 = i * LIST_CHUNK, k1 = Math.min(this.cMisc[0], k0 + LIST_CHUNK);
+      if (code === PH_LCOUNT) for (let k = k0; k < k1; k++) { const m = kM[k]; Atomics.add(st, mA[m] + 1, 1); const b = mB[m]; if (b >= 0) Atomics.add(st, b + 1, 1); }
+      else { const fill = C.fillTmp; for (let k = k0; k < k1; k++) { const m = kM[k]; bl[Atomics.add(fill, mA[m], 1)] = k << 1; const b = mB[m]; if (b >= 0) bl[Atomics.add(fill, b, 1)] = (k << 1) | 1; } }
+    }
+    // Steering on all threads: each agent writes only its own entries; arrivals go through the shared arrival buffer
+    // and are sorted by permanent id before respawning, so the order threads finish in doesn't matter.
+    steerThreaded(dt) {
+      if (!this.beginSession({ dt, speed: this.speed, ph: this.ph, cur: this.cons.indexOf(this.conCur), nk: this.conCur.nk })) return false;
+      const ctl = this.ctl, keep = this.arrived, ab = this.arrBuf;
+      this.arrived = { push: (a) => { ab[Atomics.add(ctl, 4, 1)] = a; } };
+      this.phase(PH_STEER, 0, 0, Math.ceil(this.M / STEER_CHUNK));
+      this.arrived = keep;
+      if (this.threads > 1) this.endSession();
+      for (let i = 0, na = Atomics.load(ctl, 4); i < na; i++) keep.push(ab[i]);
+      return true; // a helper that failed partway leaves some agents unsteered this tick; the checksums would show it
     }
     contactsItem(i) { // one chunk into its staging region; records its output, whether it overflowed, and its overlap stats
       const plan = this.cPlan, V = this.conStage || this.cons[2], keep = this.conCur, p = 8 * i;
@@ -2897,9 +2952,9 @@ var SimCore = (function () {
         this.applyFields(); this.applyCommands();
         if (this.steps % FIELD_EVERY === 0) this.issueBatch(false);
         if (this.bench) {
-          const c = this.cnt, c0 = [c.step, c.moves, c.upkeep, c.cong, c.passes, c.other, c.solve || 0, c.contacts || 0, c.coord || 0];
+          const c = this.cnt, c0 = [c.step, c.moves, c.upkeep, c.cong, c.passes, c.other, c.solve || 0, c.contacts || 0, c.coord || 0, c.steer || 0];
           this.step(); steps++;
-          if (this.bench) this.benchTick([c.step - c0[0], c.moves - c0[1], c.upkeep - c0[2], c.cong - c0[3], c.passes - c0[4], c.other - c0[5], (c.solve || 0) - c0[6], (c.contacts || 0) - c0[7], (c.coord || 0) - c0[8]]);
+          if (this.bench) this.benchTick([c.step - c0[0], c.moves - c0[1], c.upkeep - c0[2], c.cong - c0[3], c.passes - c0[4], c.other - c0[5], (c.solve || 0) - c0[6], (c.contacts || 0) - c0[7], (c.coord || 0) - c0[8], (c.steer || 0) - c0[9]]);
         } else { this.step(); steps++; }
         if (this.steps % CHECK_EVERY === 0) { const h = this.checksum(); this.checks.push([this.steps, h[0], h[1]]); }
         if (now() - t0 > 40) break; // pacing only
@@ -3545,14 +3600,14 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
     const out = $('benchOut'); out.textContent = ''; $('benchBtn').disabled = false; $('thrA').disabled = false;
     if (m.error) { out.textContent = m.error; return; }
     const base = m.rows.find((r) => r.n === 1) || m.rows[0], t = document.createElement('table'), head = t.createTHead().insertRow();
-    for (const h of ['Threads', 'ms per 1/60 s', 'Speed-up', 'Physics', 'Solve', 'Contacts', 'Coordination', 'Congestion', 'Grid', 'Sort, setup']) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = h; head.appendChild(th); }
+    for (const h of ['Threads', 'ms per 1/60 s', 'Speed-up', 'Physics', 'Solve', 'Contacts', 'Coordination', 'Steering', 'Congestion', 'Grid', 'Sort, setup']) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = h; head.appendChild(th); }
     const body = t.createTBody();
     for (const r of m.rows) {
       const tr = body.insertRow();
-      for (const v of [String(r.n), r.step.toFixed(1), (base.step / r.step).toFixed(2) + '×', r.moves.toFixed(1), (r.solve || 0).toFixed(1), (r.contacts || 0).toFixed(1), (r.coord || 0).toFixed(1), r.cong.toFixed(1), r.upkeep.toFixed(1), (r.passes + r.other).toFixed(1)]) tr.insertCell().textContent = v;
+      for (const v of [String(r.n), r.step.toFixed(1), (base.step / r.step).toFixed(2) + '×', r.moves.toFixed(1), (r.solve || 0).toFixed(1), (r.contacts || 0).toFixed(1), (r.coord || 0).toFixed(1), (r.steer || 0).toFixed(1), r.cong.toFixed(1), r.upkeep.toFixed(1), (r.passes + r.other).toFixed(1)]) tr.insertCell().textContent = v;
     }
     const best = m.rows.reduce((x, r) => (r.step < x.step ? r : x)), p = document.createElement('p');
-    p.textContent = `Fastest: ${best.n} thread${best.n === 1 ? '' : 's'}, ${best.step.toFixed(1)} ms per 1/60 s, which is ${(16.67 / best.step).toFixed(2)}× real time. The solve, contact search and coordination run on all threads; steering, the remaining per-agent physics, congestion, the grid rebuild and the re-sort still run on one. Peer B kept checking throughout.`;
+    p.textContent = `Fastest: ${best.n} thread${best.n === 1 ? '' : 's'}, ${best.step.toFixed(1)} ms per 1/60 s, which is ${(16.67 / best.step).toFixed(2)}× real time. The solve, contact search (with its per-body lists), coordination and steering run on all threads; the starting-point prediction, velocities and forces, congestion, the grid rebuild and the re-sort still run on one. Peer B kept checking throughout.`;
     out.append(t, p);
   }
   function setupThreads() {
@@ -3949,7 +4004,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
   window.__lab4replay = replayB;
   { // what this computer offers for more threads
     const el = document.getElementById('hwInfo'), n = navigator.hardwareConcurrency || 0;
-    if (el) el.textContent = (n ? `This computer reports ${n} hardware thread${n === 1 ? '' : 's'}. ` : '') + 'Lab 5 spreads the physics solver and coordination across threads; contact search and steering still run on one thread.';
+    if (el) el.textContent = (n ? `This computer reports ${n} hardware thread${n === 1 ? '' : 's'}. ` : '') + 'Lab 5 spreads the physics solve, contact search, coordination and steering across threads.';
   }
   setTool('select');
   if (!(await startWorkers())) startInProcess();
