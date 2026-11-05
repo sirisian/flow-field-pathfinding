@@ -1,5 +1,7 @@
 # Flow field
 
+Demo: https://sirisian.github.io/flow-field-pathfinding/
+
 The core technique is taken from a deleted StackOverflow post here: https://gamedev.stackexchange.com/posts/153011/revisions
 
 Note: None of these have been heavily optimized as this is just a quick JavaScript reference. It is presented with the idea that one can feed this into an AI model which will merge it into whatever ECS you happen to be using.
