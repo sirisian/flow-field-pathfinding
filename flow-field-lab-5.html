@@ -1015,12 +1015,15 @@ var SimCore = (function () {
   // Per-agent arrays the re-sort permutes (the same list, in the same order, as the one-thread re-sort).
   const PERM = ['ax', 'ay', 'aVX', 'aVY', 'aStuck', 'aT0', 'aR', 'aTry', 'idOf', 'bvCell', 'aG', 'aSide', 'aSleep', 'aS', 'aC', 'aLv', 'bvLayer', 'aUid'];
   // Phases of a threaded substep: every thread takes work items of the current phase until none are left.
-  const PH_MOVE = 1, PH_CONG = 2, PH_GHASH = 3, PH_GSCATTER = 4, PH_PERM = 5, PH_GBUILD = 6, PH_PRIMAL = 7, PH_DUAL = 8, PH_END = 9, PH_COORD = 10, PH_CONTACTS = 11, PH_CCOPY = 12, PH_LCOUNT = 13, PH_LFILL = 14, PH_LSORT = 15, PH_STEER = 16;
+  const PH_MOVE = 1, PH_CONG = 2, PH_GHASH = 3, PH_GSCATTER = 4, PH_PERM = 5, PH_GBUILD = 6, PH_PRIMAL = 7, PH_DUAL = 8, PH_END = 9, PH_COORD = 10, PH_CONTACTS = 11, PH_CCOPY = 12, PH_LCOUNT = 13, PH_LFILL = 14, PH_LSORT = 15, PH_STEER = 16, PH_TCAP = 17, PH_TGATHER = 18, PH_TVEL = 19, PH_TFORCE = 20, PH_CONG2 = 21, PH_G1 = 22, PH_G2 = 23, PH_G3 = 24;
   // Threaded physics: every array the per-body solve and the contact update read or write (positions are already shared)
   const PHYS_KEYS = ['aBud', 'aFE', 'aHd', 'aIn', 'aM', 'aSh', 'aTh', 'aTh0', 'aX0', 'aY0', 'aYT', 'aYX', 'aYY'];
   const COORD_KEYS = ['aTeam', 'aTVX', 'aTVY', 'aDVX', 'aDVY', 'aAv', 'aMwX', 'aMwY'];
   const SOLVE_ITEM = 64, DUAL_CHUNK = 2048, COORD_CHUNK = 256, CONTACT_CHUNK = 256, LIST_CHUNK = 4096, STEER_CHUNK = 512;
-  const STEER_KEYS = ['aThr', 'aG', 'aC']; // with the physics, coordination and contact keys: everything steering touches
+  const STEER_KEYS = ['aThr', 'aG', 'aC'];
+  const CONG_KEYS = ['rho', 'jam', 'F4', 'lastT', 'secActive']; // congestion's per-tile arrays
+  const GRID_CHUNK = 2048, GRID_BUCKETS = 8192; // agents per item for bucketing and scattering, buckets per item for sorting
+  const TAIL_CHUNK = 512, TAIL_KEYS = ['aSvX', 'aSvY', 'aPr', 'aFx', 'aFy', 'aRm', 'vStat', 'aStuck']; // the step's tail: start, velocities, forces // with the physics, coordination and contact keys: everything steering touches
   const CONTACT_KEYS = ['aRm', 'aCs', 'aSn', 'aW', 'wall', 'cPlan', 'cOff', 'cStat', 'cMisc']; // also read or written by the threaded contact search // bodies per solve work item (at least), contacts per contact-update item
   const BENCH_WARM = 24, BENCH_TICKS = 48; // per measured run: ticks after a switch that are not timed, then timed ticks
   // A work unit is up to 8 cells of one colour in one strip, so slower cores never hold a pass up for long.
@@ -1434,6 +1437,41 @@ var SimCore = (function () {
         if (l.agents.length < l.n) { const z = Math.max(l.n, l.agents.length * 2); l.agents = new Int32Array(z); l.px = new Float64Array(z); l.py = new Float64Array(z); l.pr = new Float64Array(z); }
       }
     }
+    // The grid rebuild on all threads: each agent's bucket counted with atomic adds, prefix sums here, a scatter through
+    // atomic cursors, then each bucket sorted by agent so it lists agents in index order exactly as rebuildGrid does,
+    // and positions copied in bucket order. Sizing and any reallocation happen first, before helpers get their views.
+    gridThreaded() {
+      const M = this.M, lv = this.lv;
+      this.prepareGrid();
+      for (const l of lv) l.count.fill(0);
+      if (!this.beginSession({ dt: P.dt, speed: this.speed, ph: this.ph, cur: this.cons.indexOf(this.conCur), nk: this.conCur.nk })) return false;
+      const na = Math.ceil(M / GRID_CHUNK);
+      this.phase(PH_G1, 0, 0, na);
+      for (const l of lv) { const st = l.start, cnt = l.count; let s0 = 0; for (let b = 0; b < l.T; b++) { st[b] = s0; s0 += cnt[b]; } st[l.T] = s0; l.fill.set(st.subarray(0, l.T)); }
+      this.phase(PH_G2, 0, 0, na);
+      const b0 = Math.ceil(lv[0].T / GRID_BUCKETS), b1 = b0 + Math.ceil(lv[1].T / GRID_BUCKETS), b2 = b1 + Math.ceil(lv[2].T / GRID_BUCKETS);
+      this.gItems = [b0, b1, b2];
+      this.phase(PH_G3, 0, 0, b2);
+      if (this.threads > 1) this.endSession();
+      return true;
+    }
+    gridItem(code, i) {
+      const lv = this.lv, ax = this.ax, ay = this.ay, aLv = this.aLv, aB = this.aB;
+      if (code !== PH_G3) {
+        const a1 = Math.min(this.M, (i + 1) * GRID_CHUNK);
+        if (code === PH_G1) for (let a = i * GRID_CHUNK; a < a1; a++) { const l = lv[aLv[a]], b = hashBin(Math.floor(ax[a] * l.inv), Math.floor(ay[a] * l.inv), l.mask); aB[a] = b; Atomics.add(l.count, b, 1); }
+        else for (let a = i * GRID_CHUNK; a < a1; a++) { const l = lv[aLv[a]]; l.agents[Atomics.add(l.fill, aB[a], 1)] = a; }
+        return;
+      }
+      const T0 = Math.ceil(lv[0].T / GRID_BUCKETS), T1 = T0 + Math.ceil(lv[1].T / GRID_BUCKETS);
+      const k = i < T0 ? 0 : i < T1 ? 1 : 2, l = lv[k], first = (i - (k === 0 ? 0 : k === 1 ? T0 : T1)) * GRID_BUCKETS, last = Math.min(l.T, first + GRID_BUCKETS);
+      const st = l.start, ag = l.agents, px = l.px, py = l.py, pr = l.pr, aR = this.aR;
+      for (let b = first; b < last; b++) {
+        const j0 = st[b], j1 = st[b + 1];
+        for (let j = j0 + 1; j < j1; j++) { const v = ag[j]; let q = j - 1; while (q >= j0 && ag[q] > v) { ag[q + 1] = ag[q]; q--; } ag[q + 1] = v; }
+        for (let j = j0; j < j1; j++) { const a = ag[j]; px[j] = ax[a]; py[j] = ay[a]; pr[j] = aR[a]; }
+      }
+    }
     rebuildGrid() {
       const M = this.M, lv = this.lv;
       this.prepareGrid();
@@ -1672,6 +1710,25 @@ var SimCore = (function () {
       if (vy > 0) F[b + 2] += w * vy; else F[b + 3] -= w * vy;
     }
     congestion(dt) { const gdt = P.gain * dt; for (let a = 0, M = this.M; a < M; a++) this.congAgent(a, gdt); }
+    // Congestion in colour order on any number of threads. The colour lists are built here once per step, from the
+    // positions at its start, and the solve reuses them: bodies move under 0.05 tiles in a step, far inside the 8-tile
+    // separation of same-colour cells. A footprint reaches at most about 2 tiles, so within one colour no two agents
+    // add to the same tile, and every tile receives its additions in the same order whatever the thread count.
+    congestionOrdered(dt) {
+      const gdt = P.gain * dt;
+      this.buildSolveOrder();
+      if (this.threads > 1 && this.M >= 2 * SOLVE_ITEM && this.congThreaded(gdt)) return;
+      const idx = this.sIdx, items = this.sItems, col = this.sItemCol;
+      for (let c = 0; c < 9; c++) for (let i = col[c]; i < col[c + 1]; i++) for (let j = items[2 * i], e = items[2 * i + 1]; j < e; j++) this.congAgent(idx[j], gdt);
+    }
+    congThreaded(gdt) {
+      if (!this.beginSession({ dt: P.dt, gdt, speed: this.speed, ph: this.ph, cur: this.cons.indexOf(this.conCur), nk: this.conCur.nk })) return false;
+      this.congGdt = gdt;
+      const col = this.sItemCol;
+      for (let c = 0; c < 9; c++) if (col[c + 1] > col[c]) this.phase(PH_CONG2, c, col[c], col[c + 1]);
+      if (this.threads > 1) this.endSession();
+      return true;
+    }
     // One agent's congestion: its footprint reaches at most about 2.5 tiles, so same-colour cells never share a tile.
     congAgent(a, gdt) {
       const r0 = SIZES[0], x = this.ax[a], y = this.ay[a], r = this.aR[a], cx = x | 0, cy = y | 0, vx = this.aVX[a], vy = this.aVY[a];
@@ -1911,8 +1968,8 @@ var SimCore = (function () {
       if (this.threads > 1) this.ensureSharedPhysics();
       this.L = this.speed * dt;
       if (this.tick % REORDER_EVERY === 0) { const tr = now(); this.reorder(); this.cnt.other += now() - tr; }
-      let t0 = now(); this.rebuildGrid(); this.cnt.upkeep += now() - t0;
-      t0 = now(); this.congestion(dt); this.cnt.cong += now() - t0;
+      let t0 = now(); if (!(this.threads > 1 && this.M >= 2 * GRID_CHUNK && this.gridThreaded())) this.rebuildGrid(); this.cnt.upkeep += now() - t0;
+      t0 = now(); this.congestionOrdered(dt); this.cnt.cong += now() - t0;
       this.tick++; this.moved = 0;
       t0 = now(); this.physicsStep(dt); this.cnt.moves += now() - t0;
       if (this.arrived.length) { const tr = now(), u = this.aUid; this.arrived.sort((p, q) => u[p] - u[q]); this.respawnArrived(); this.cnt.other += now() - tr; }
@@ -2145,6 +2202,11 @@ var SimCore = (function () {
       for (const k of COORD_KEYS) this[k] = this.sharedCopy(this[k]);
       for (const k of STEER_KEYS) this[k] = this.sharedCopy(this[k]);
       for (const k of ['aCs', 'aSn', 'aW']) this[k] = this.sharedCopy(this[k]);
+      const M = this.M, n = Math.max(M, 1024);
+      if (!this.aSvX || this.aSvX.length < M) { this.aSvX = new Float64Array(n); this.aSvY = new Float64Array(n); this.aCx = new Float64Array(n); this.aCy = new Float64Array(n); }
+      if (!this.aRm || this.aRm.length < M) this.aRm = new Float64Array(n);
+      for (const k of TAIL_KEYS) if (this[k]) this[k] = this.sharedCopy(this[k]);
+      for (const k of CONG_KEYS) this[k] = this.sharedCopy(this[k]);
     }
     sharePhysics() {
       const att = this.shareAll(), sent = this.sharedSent;
@@ -2153,6 +2215,8 @@ var SimCore = (function () {
       for (const k of COORD_KEYS) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
       for (const k of CONTACT_KEYS) if (this[k]) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
       for (const k of STEER_KEYS) if (this[k]) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
+      for (const k of TAIL_KEYS) if (this[k]) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
+      for (const k of CONG_KEYS) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
       for (const k of ['sIdx', 'sItems', 'flowX', 'flowY']) if (this[k]) { this[k] = this.sharedCopy(this[k]); put(k, this[k]); }
       this.cons.forEach((S, i) => { for (const f of Object.keys(S)) if (ArrayBuffer.isView(S[f])) { S[f] = this.sharedCopy(S[f]); put('cs' + i + '.' + f, S[f]); } });
       return att;
@@ -2225,7 +2289,10 @@ var SimCore = (function () {
       else if (code === PH_PRIMAL) { const it = this.sItems, idx = this.sIdx, dt = this.physDt; for (let j = it[2 * i], e = it[2 * i + 1]; j < e; j++) this.primal(idx[j], dt); }
       else if (code === PH_CONTACTS) this.contactsItem(i);
       else if (code === PH_LCOUNT || code === PH_LFILL || code === PH_LSORT) this.listItem(code, i);
-      else if (code === PH_STEER) { const a1 = Math.min(this.M, (i + 1) * STEER_CHUNK), dt = this.physDt; for (let a = i * STEER_CHUNK; a < a1; a++) this.steer(a, dt); }
+      else if (code === PH_STEER) { const a1 = Math.min(this.M, (i + 1) * STEER_CHUNK), dt = this.physDt; for (let a = i * STEER_CHUNK; a < a1; a++) { this.steer(a, dt); this.budgetAgent(a, dt); } }
+      else if (code >= PH_TCAP && code <= PH_TFORCE) this.tailItem(code, i);
+      else if (code >= PH_G1 && code <= PH_G3) this.gridItem(code, i);
+      else if (code === PH_CONG2) { const it = this.sItems, idx = this.sIdx, g = this.congGdt; for (let j = it[2 * i], e = it[2 * i + 1]; j < e; j++) this.congAgent(idx[j], g); }
       else if (code === PH_CCOPY) this.copyItem(i);
       else if (code === PH_COORD) { const a0 = i * COORD_CHUNK, a1 = Math.min(this.M, a0 + COORD_CHUNK); for (let a = a0; a < a1; a++) this.coordAgent(a); }
       else if (code === PH_DUAL) { const k0 = i * DUAL_CHUNK; this.dualRange(k0, Math.min(this.conCur.nk, k0 + DUAL_CHUNK)); }
@@ -2248,11 +2315,14 @@ var SimCore = (function () {
       const M = this.M, ph = this.ph, ax = this.ax, ay = this.ay, th = this.aTh;
       if (ph.coord && (this.tick - 1) % 8 === 0) { const tc = now(); this.coordinate(); this.cnt.coord = (this.cnt.coord || 0) + now() - tc; } // 15 Hz
       const tsr = now();
-      if (!(this.threads > 1 && M >= 2 * STEER_CHUNK && this.steerThreaded(dt))) for (let a = 0; a < M; a++) this.steer(a, dt);
+      if (!this.aRm || this.aRm.length < M) this.aRm = new Float64Array(Math.max(M, 1024));
+      if (!(this.threads > 1 && M >= 2 * STEER_CHUNK && this.steerThreaded(dt))) for (let a = 0; a < M; a++) { this.steer(a, dt); this.budgetAgent(a, dt); }
       this.cnt.steer = (this.cnt.steer || 0) + now() - tsr;
       let t0 = now(); this.buildContacts(dt); this.cnt.contacts = (this.cnt.contacts || 0) + now() - t0;
       if (ph.rot === 0) for (let a = 0; a < M; a++) if (this.aSh[a]) { this.aYT[a] = this.aTh0[a]; th[a] = this.aTh0[a]; } // keep orientation
-      if (ph.start === 1) for (let a = 0; a < M; a++) { ax[a] = this.aYX[a]; ay[a] = this.aYY[a]; th[a] = this.aYT[a]; } // start from the inertial targets
+      const tail = this.threads > 1 && ph.start === 6 && M >= 2 * TAIL_CHUNK && this.tailThreaded(dt);
+      if (tail) { /* done in the threaded tail */ }
+      else if (ph.start === 1) for (let a = 0; a < M; a++) { ax[a] = this.aYX[a]; ay[a] = this.aYY[a]; th[a] = this.aYT[a]; } // start from the inertial targets
       else if (ph.start === 2) for (let a = 0; a < M; a++) { ax[a] = this.aX0[a] + this.aVX[a] * dt; ay[a] = this.aY0[a] + this.aVY[a] * dt; } // from momentum alone
       else if (ph.start >= 4) { // a prediction held back wherever it would run into a contact (5: pressed agents stay;
         // 6: the prediction is where each unit actually went last tick, capped at its desired speed)
@@ -2285,42 +2355,18 @@ var SimCore = (function () {
         if (this.aPr[a] > ph.press * this.aM[a] * ph.accel * this.speed) continue;
         ax[a] = this.aX0[a] + this.aVX[a] * dt; ay[a] = this.aY0[a] + this.aVY[a] * dt;
       }
-      t0 = now();
-      this.buildSolveOrder(); // colour order on any number of threads, so the thread count never changes the result
-      if (!(this.threads > 1 && this.solveThreaded(dt))) this.solveSerial(dt, 0);
-      this.cnt.solve = (this.cnt.solve || 0) + now() - t0;
-      const vmax = Math.max(4, 4 * this.speed), inv = 1 / dt, slow = 0.01 * this.speed * this.speed; let moving = 0, want = 0, stuck = 0, side = 0, flowNum = 0, flowDen = 0;
-      for (let a = 0; a < M; a++) { // velocities from positions (implicit Euler), with guards against blow-ups
-        let vx = (ax[a] - this.aX0[a]) * inv, vy = (ay[a] - this.aY0[a]) * inv;
-        const v2 = vx * vx + vy * vy;
-        if (v2 > vmax * vmax) { const k = vmax / Math.sqrt(v2); vx *= k; vy *= k; } // the next step's inertia only: the solved pose stays
-        if (ax[a] < 0.01) ax[a] = 0.01; else if (ax[a] > W - 0.01) ax[a] = W - 0.01;
-        if (ay[a] < 0.01) ay[a] = 0.01; else if (ay[a] > H - 0.01) ay[a] = H - 0.01;
-        this.aVX[a] = vx; this.aVY[a] = vy;
-        if (this.aSh[a]) {
-          const wm = ph.wMax; let w = (th[a] - this.aTh0[a]) * inv; if (w > wm) w = wm; else if (w < -wm) w = -wm;
-          this.aW[a] = ph.rot === 0 ? 0 : w; let t = th[a];
-          if (t > Math.PI) t -= TWO_PI; else if (t < -Math.PI) t += TWO_PI;
-          th[a] = t;
-        }
-        if (v2 > slow) moving++;
-        const dl = Math.sqrt(this.aDVX[a] * this.aDVX[a] + this.aDVY[a] * this.aDVY[a]); // stuck: wants to move, barely does
-        if (dl > 0.5 * this.speed) { want++; const fwd = (vx * this.aDVX[a] + vy * this.aDVY[a]) / dl; flowNum += fwd > 0 ? fwd : 0; flowDen += dl; if (fwd < 0.1 * this.speed) { this.aStuck[a] += dt; if (this.aStuck[a] > 1) stuck++; } else this.aStuck[a] = 0; }
-        else this.aStuck[a] = 0;
-        if (this.aAv[a] !== 0) side++;
+      if (!tail) {
+        t0 = now(); // the colour lists were built at the start of the step, for congestion
+        if (!(this.threads > 1 && this.solveThreaded(dt))) this.solveSerial(dt, 0);
+        this.cnt.solve = (this.cnt.solve || 0) + now() - t0;
       }
-      this.moved = moving; this.st.stuck = want ? stuck / want : 0; this.st.side = M ? side / M : 0;
-      this.st.flow = flowDen ? flowNum / flowDen : 1; // share of desired speed achieved
-      { // each agent's largest contact force, and its blocking force: the sum of contact forces that don't clearly push it
-        // forward along where it wants to go (pushes from behind must not cancel the push-back from in front)
-        const C = this.conCur, pr = this.aPr, fx = this.aFx, fy = this.aFy, dvx = this.aDVX, dvy = this.aDVY; pr.fill(0, 0, M); fx.fill(0, 0, M); fy.fill(0, 0, M);
-        for (let k = 0; k < C.nk; k++) {
-          const f = -C.kLN[k]; if (f <= 0) continue;
-          const mi = C.kM[k], A = C.mA[mi], B = C.mB[mi], nx = C.kNX[k] * f, ny = C.kNY[k] * f; // the normal points from B to A
-          if (f > pr[A]) pr[A] = f;
-          if (nx * dvx[A] + ny * dvy[A] < 0.1 * f * Math.sqrt(dvx[A] * dvx[A] + dvy[A] * dvy[A])) { fx[A] += nx; fy[A] += ny; }
-          if (B >= 0) { if (f > pr[B]) pr[B] = f; if (-(nx * dvx[B] + ny * dvy[B]) < 0.1 * f * Math.sqrt(dvx[B] * dvx[B] + dvy[B] * dvy[B])) { fx[B] -= nx; fy[B] -= ny; } }
-        }
+
+      if (!tail) {
+        const na = Math.ceil(M / TAIL_CHUNK);
+        if (!this.vStat || this.vStat.length < 6 * na) this.vStat = new Float64Array(6 * (na + 64));
+        for (let i = 0; i < na; i++) this.velChunk(i, dt);
+        this.tailStats(na);
+        for (let a = 0; a < M; a++) this.forceGather(a);
       }
       const t = this.conPrev; this.conPrev = this.conCur; this.conCur = t; this.conPrev.buildHash();
     }
@@ -2414,15 +2460,10 @@ var SimCore = (function () {
     // Contacts at the start of the step, for every pair and wall tile within this step's reach.
     buildContacts(dt) {
       const C = this.conCur, M = this.M, ax = this.ax, ay = this.ay, aR = this.aR, wall = this.wall;
-      const margin = 2.5 * this.speed * dt + 0.02, rm = this.aRm || (this.aRm = new Float64Array(0));
-      if (rm.length < M) this.aRm = new Float64Array(Math.max(M, 1024));
+      const margin = 2.5 * this.speed * dt + 0.02;
       let rmMax = 0;
       const ph = this.ph;
-      for (let a = 0; a < M; a++) { // each square's turn budget for this step; its corners can swing at most budget * radius
-        const bud = !this.aSh[a] || ph.rot === 0 ? 0 : Math.min(0.2, (Math.abs(this.aW[a]) + (ph.rot === 2 ? ph.faceW * Math.abs(this.aFE[a]) : 0)) * dt * ph.rotK + 0.005);
-        this.aBud[a] = bud; const v = bud * this.aR[a];
-        this.aRm[a] = v; if (v > rmMax) rmMax = v;
-      }
+      for (let a = 0; a < M; a++) if (this.aRm[a] > rmMax) rmMax = this.aRm[a]; // budgets were set with each agent's steering
       this.cMargin = margin; this.cRmMax = rmMax; this.cDt = dt; this.deep = 0; this.nOver = 0;
       this.cListed = false;
       if (!(this.threads > 1 && M >= 2 * CONTACT_CHUNK && this.contactsThreaded(dt))) {
@@ -2543,6 +2584,105 @@ var SimCore = (function () {
     }
     // Steering on all threads: each agent writes only its own entries; arrivals go through the shared arrival buffer
     // and are sorted by permanent id before respawning, so the order threads finish in doesn't matter.
+    // Velocities from positions for one chunk of agents, and the chunk's share of the statistics.
+    velChunk(i, dt) {
+      const M = this.M, ph = this.ph, ax = this.ax, ay = this.ay, th = this.aTh, a0 = i * TAIL_CHUNK, a1 = Math.min(M, a0 + TAIL_CHUNK);
+      const vmax = Math.max(4, 4 * this.speed), inv = 1 / dt, slow = 0.01 * this.speed * this.speed; let moving = 0, want = 0, stuck = 0, side = 0, flowNum = 0, flowDen = 0;
+      for (let a = a0; a < a1; a++) { // velocities from positions (implicit Euler), with guards against blow-ups
+        let vx = (ax[a] - this.aX0[a]) * inv, vy = (ay[a] - this.aY0[a]) * inv;
+        const v2 = vx * vx + vy * vy;
+        if (v2 > vmax * vmax) { const k = vmax / Math.sqrt(v2); vx *= k; vy *= k; } // the next step's inertia only: the solved pose stays
+        if (ax[a] < 0.01) ax[a] = 0.01; else if (ax[a] > W - 0.01) ax[a] = W - 0.01;
+        if (ay[a] < 0.01) ay[a] = 0.01; else if (ay[a] > H - 0.01) ay[a] = H - 0.01;
+        this.aVX[a] = vx; this.aVY[a] = vy;
+        if (this.aSh[a]) {
+          const wm = ph.wMax; let w = (th[a] - this.aTh0[a]) * inv; if (w > wm) w = wm; else if (w < -wm) w = -wm;
+          this.aW[a] = ph.rot === 0 ? 0 : w; let t = th[a];
+          if (t > Math.PI) t -= TWO_PI; else if (t < -Math.PI) t += TWO_PI;
+          th[a] = t;
+        }
+        if (v2 > slow) moving++;
+        const dl = Math.sqrt(this.aDVX[a] * this.aDVX[a] + this.aDVY[a] * this.aDVY[a]); // stuck: wants to move, barely does
+        if (dl > 0.5 * this.speed) { want++; const fwd = (vx * this.aDVX[a] + vy * this.aDVY[a]) / dl; flowNum += fwd > 0 ? fwd : 0; flowDen += dl; if (fwd < 0.1 * this.speed) { this.aStuck[a] += dt; if (this.aStuck[a] > 1) stuck++; } else this.aStuck[a] = 0; }
+        else this.aStuck[a] = 0;
+        if (this.aAv[a] !== 0) side++;
+      }
+      const v = this.vStat, o = 6 * i; v[o] = moving; v[o + 1] = want; v[o + 2] = stuck; v[o + 3] = side; v[o + 4] = flowNum; v[o + 5] = flowDen;
+    }
+    tailStats(na) { // chunk statistics combined in chunk order
+      const v = this.vStat; let moving = 0, want = 0, stuck = 0, side = 0, flowNum = 0, flowDen = 0;
+      for (let i = 0, o = 0; i < na; i++, o += 6) { moving += v[o]; want += v[o + 1]; stuck += v[o + 2]; side += v[o + 3]; flowNum += v[o + 4]; flowDen += v[o + 5]; }
+      const M = this.M; this.moved = moving; this.st.stuck = want ? stuck / want : 0; this.st.side = M ? side / M : 0;
+      this.st.flow = flowDen ? flowNum / flowDen : 1; // share of desired speed achieved
+    }
+    // One agent's largest contact force, and its blocking force: the sum of contact forces that don't clearly push it
+    // forward along where it wants to go (pushes from behind must not cancel the push-back from in front). Gathered
+    // through its contact list in point order, the order the forces were once scattered in.
+    forceGather(a) {
+      const C = this.conCur, dx = this.aDVX[a], dy = this.aDVY[a], dl = Math.sqrt(dx * dx + dy * dy);
+      let pr = 0, fx = 0, fy = 0;
+      for (let j = C.bStart[a], e = C.bStart[a + 1]; j < e; j++) {
+        const code = C.bList[j], k = code >> 1, f = -C.kLN[k]; if (f <= 0) continue;
+        const nx = C.kNX[k] * f, ny = C.kNY[k] * f; // the normal points from B to A
+        if (f > pr) pr = f;
+        if (code & 1) { if (-(nx * dx + ny * dy) < 0.1 * f * dl) { fx -= nx; fy -= ny; } }
+        else if (nx * dx + ny * dy < 0.1 * f * dl) { fx += nx; fy += ny; }
+      }
+      this.aPr[a] = pr; this.aFx[a] = fx; this.aFy[a] = fy;
+    }
+    // Starting point (mode 6), per agent: where it actually went last tick, capped at its desired speed ...
+    startCap(a) {
+      let vx = this.aVX[a], vy = this.aVY[a]; const v2 = vx * vx + vy * vy, dx = this.aDVX[a], dy = this.aDVY[a], cap2 = dx * dx + dy * dy;
+      if (v2 > cap2) { const f = cap2 > 0 ? Math.sqrt(cap2 / v2) : 0; vx *= f; vy *= f; }
+      this.aSvX[a] = vx; this.aSvY[a] = vy;
+    }
+    // ... then held back by its share of every predicted overlap, gathered through its contact list in point order.
+    startGather(a, dt) {
+      const C = this.conCur, svx = this.aSvX, svy = this.aSvY; let cx = 0, cy = 0;
+      for (let j = C.bStart[a], e = C.bStart[a + 1]; j < e; j++) {
+        const code = C.bList[j], k = code >> 1, mi = C.kM[k], A = C.mA[mi], B = C.mB[mi], nx = C.kNX[k], ny = C.kNY[k];
+        let rx = svx[A] * dt, ry = svy[A] * dt;
+        if (B >= 0) { rx -= svx[B] * dt; ry -= svy[B] * dt; }
+        const cp = C.kC0N[k] + nx * rx + ny * ry; if (cp >= 0) continue;
+        const wA = 1 / this.aM[A], wB = B >= 0 ? 1 / this.aM[B] : 0, s = -cp / (wA + wB);
+        if (code & 1) { cx -= nx * s * wB; cy -= ny * s * wB; } else { cx += nx * s * wA; cy += ny * s * wA; }
+      }
+      this.ax[a] = this.aX0[a] + svx[a] * dt + cx; this.ay[a] = this.aY0[a] + svy[a] * dt + cy;
+    }
+    tailItem(code, i) {
+      const a0 = i * TAIL_CHUNK, a1 = Math.min(this.M, a0 + TAIL_CHUNK), dt = this.physDt;
+      if (code === PH_TCAP) for (let a = a0; a < a1; a++) this.startCap(a);
+      else if (code === PH_TGATHER) for (let a = a0; a < a1; a++) this.startGather(a, dt);
+      else if (code === PH_TVEL) this.velChunk(i, dt);
+      else for (let a = a0; a < a1; a++) this.forceGather(a);
+    }
+    // The step's tail on all threads, in one session: starting point, solve order, solve, velocities, forces.
+    tailThreaded(dt) {
+      const M = this.M, na = Math.ceil(M / TAIL_CHUNK);
+      if (!this.vStat || this.vStat.length < 6 * na) this.vStat = new Float64Array(6 * (na + 64));
+      if (!this.beginSession({ dt, speed: this.speed, ph: this.ph, cur: this.cons.indexOf(this.conCur), nk: this.conCur.nk })) return false;
+      this.phase(PH_TCAP, 0, 0, na);
+      this.phase(PH_TGATHER, 0, 0, na);
+      const t0 = now();
+      this.solvePhases(dt); // with the colour lists built at the start of the step, for congestion
+      this.cnt.solve = (this.cnt.solve || 0) + now() - t0;
+      this.phase(PH_TVEL, 0, 0, na);
+      this.phase(PH_TFORCE, 0, 0, na);
+      this.endSession();
+      this.tailStats(na);
+      return true;
+    }
+    solvePhases(dt) { // after a failed helper, phase() runs every item on this thread, so the solve still finishes
+      const ph = this.ph, col = this.sItemCol, nkc = Math.ceil(this.conCur.nk / DUAL_CHUNK);
+      for (let it = 0; it < ph.iters; it++) {
+        for (let c = 0; c < 9; c++) if (col[c + 1] > col[c]) this.phase(PH_PRIMAL, c, col[c], col[c + 1]);
+        if (nkc) this.phase(PH_DUAL, 0, 0, nkc);
+      }
+    }
+    budgetAgent(a, dt) { // each square's turn budget for this step; its corners can swing at most budget * radius
+      const ph = this.ph, bud = !this.aSh[a] || ph.rot === 0 ? 0 : Math.min(0.2, (Math.abs(this.aW[a]) + (ph.rot === 2 ? ph.faceW * Math.abs(this.aFE[a]) : 0)) * dt * ph.rotK + 0.005);
+      this.aBud[a] = bud; const v = bud * this.aR[a]; this.aRm[a] = v;
+    }
     steerThreaded(dt) {
       if (!this.beginSession({ dt, speed: this.speed, ph: this.ph, cur: this.cons.indexOf(this.conCur), nk: this.conCur.nk })) return false;
       const ctl = this.ctl, keep = this.arrived, ab = this.arrBuf;
@@ -3269,7 +3409,7 @@ var SimCore = (function () {
       for (let i = 0; i < 3; i++) { const l = h.lv[i], q = sc.lv[i]; l.mask = q[0]; l.inv = q[1]; l.maxR = q[2]; l.T = q[3]; }
       h.arrived = { push: (a) => { ab[Atomics.add(ctl, 4, 1)] = a; } };
       if (sc.phys) {
-        const q = sc.phys; h.ph = q.ph; h.speed = q.speed; h.physDt = q.dt; h.conCur = h.cons[q.cur]; h.conCur.nk = q.nk; h.conStage = h.cons[2];
+        const q = sc.phys; h.ph = q.ph; if (q.gdt !== undefined) h.congGdt = q.gdt; h.speed = q.speed; h.physDt = q.dt; h.conCur = h.cons[q.cur]; h.conCur.nk = q.nk; h.conStage = h.cons[2];
         if (q.prev !== undefined) { h.conPrev = h.cons[q.prev]; h.conPrev.hMask = q.hMask; h.cMargin = q.margin; h.cRmMax = q.rmMax; h.cDt = q.dt; }
       }
       if (sc.lvn) for (let i = 0; i < 3; i++) h.lv[i].n = sc.lvn[i];
@@ -3607,7 +3747,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
       for (const v of [String(r.n), r.step.toFixed(1), (base.step / r.step).toFixed(2) + '×', r.moves.toFixed(1), (r.solve || 0).toFixed(1), (r.contacts || 0).toFixed(1), (r.coord || 0).toFixed(1), (r.steer || 0).toFixed(1), r.cong.toFixed(1), r.upkeep.toFixed(1), (r.passes + r.other).toFixed(1)]) tr.insertCell().textContent = v;
     }
     const best = m.rows.reduce((x, r) => (r.step < x.step ? r : x)), p = document.createElement('p');
-    p.textContent = `Fastest: ${best.n} thread${best.n === 1 ? '' : 's'}, ${best.step.toFixed(1)} ms per 1/60 s, which is ${(16.67 / best.step).toFixed(2)}× real time. The solve, contact search (with its per-body lists), coordination and steering run on all threads; the starting-point prediction, velocities and forces, congestion, the grid rebuild and the re-sort still run on one. Peer B kept checking throughout.`;
+    p.textContent = `Fastest: ${best.n} thread${best.n === 1 ? '' : 's'}, ${best.step.toFixed(1)} ms per 1/60 s, which is ${(16.67 / best.step).toFixed(2)}× real time. The physics, congestion and the grid rebuild run on all threads; the re-sort, building the colour lists and the warm-start table, and respawns still run on one. Peer B kept checking throughout.`;
     out.append(t, p);
   }
   function setupThreads() {
