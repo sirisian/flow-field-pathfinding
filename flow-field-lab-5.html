@@ -151,9 +151,13 @@ select { width: 100%; background: var(--page); }
         <label for="phRot" class="note">Squares turn</label>
         <select id="phRot"><option value="2" selected>Face heading</option><option value="0">Keep orientation</option><option value="1">Spin freely</option></select>
         <label for="phFace" class="note">Facing stiffness</label>
-        <select id="phFace"><option value="3">Soft</option><option value="8">Medium</option><option value="20">Stiff</option><option value="40" selected>Very stiff</option></select>
+        <select id="phFace"><option value="3">Soft</option><option value="8" selected>Medium</option><option value="20">Stiff</option><option value="40">Very stiff</option></select>
+        <label for="phTurn" class="note">Turn rate</label>
+        <select id="phTurn" title="How fast a unit's travel direction can rotate. Bounded turning stops flow-field updates and path bends from snapping units round."><option value="0">Instant</option><option value="8">Quick (8 rad/s)</option><option value="4" selected>Smooth (4 rad/s)</option><option value="2">Slow (2 rad/s)</option></select>
         <label for="phDrive" class="note">Push strength</label>
         <select id="phDrive" title="Units drive towards where they want to go with a pull capped at this multiple of their mass times their acceleration limit: they slide along what they touch and push with bounded force, and anything pushing harder moves them."><option value="1">Gentle (1×)</option><option value="2" selected>Firm (2×)</option><option value="3">Strong (3×)</option></select>
+        <label for="phSleep" class="note">Resting bodies</label>
+        <select id="phSleep" title="Units with nowhere to go (or settled in their group's target) that stay still for half a second fall asleep and skip the physics; they are drawn dimmer. They wake when ordered, when a moving ally heads into them, or when pushed harder than they could hold."><option value="1" selected>On (sleepers dimmed)</option><option value="0">Off</option></select>
         <label for="phCoord" class="note">Coordination</label>
         <select id="phCoord" title="Allies look ahead, form lanes against oncoming allied traffic, sidestep allies on a collision course and ask idle allies to make way. Enemies get none of this: they meet and block."><option value="1" selected>Allies sidestep</option><option value="0">Off (physics only)</option></select>
         <label for="teams" class="note">Teams (on reset)</label>
@@ -216,6 +220,7 @@ select { width: 100%; background: var(--page); }
         <dt>Deepest overlap</dt><dd id="sDeep">–</dd>
         <dt>Stuck over 1 s</dt><dd id="sStuck">–</dd>
         <dt>Flow</dt><dd id="sFlow">–</dd>
+        <dt>Resting</dt><dd id="sRest">–</dd>
         <dt>Field builds</dt><dd id="sField">–</dd>
         <dt>Agents</dt><dd id="sAgents">–</dd>
         <dt>Selected</dt><dd id="sSel">0</dd>
@@ -974,8 +979,13 @@ var SimCore = (function () {
   // Contact stiffness is scaled by the heavier body's inertia (mass / dt^2): kRel sets where a new contact starts and
   // betaRel how fast it stiffens per unit of violation (per 1% of a tile), so pushing works the same at every mass.
   const PHYS = { iters: 8, fric: 0.15, rest: 0, alpha: 0.8, gamma: 0.99, kRel: 8, betaRel: 10, kMin: 100, kMax: 1e9, stick: 0.002, steer: 120, arrive: 2, angDamp: 4, wMax: 10, rotK: 1.5, keep: 0.98,
-    rot: 2, turn: 4, rotI: 1, dthMax: 0.03, start: 6, faceW: 40, faceZeta: 1, corner: 1, sym: 0, press: 0.25, accel: 8,
-    coord: 1, lookT: 1, avoid: 0.8, gap: 0.1, makeWay: 0.6, lane: 1.5, drive: 2 };
+    rot: 2, turn: 4, rotI: 1, dthMax: 0.03, start: 6, faceW: 8, faceZeta: 1, corner: 1, sym: 0, press: 0.25, accel: 8,
+    coord: 1, lookT: 1, avoid: 0.8, gap: 0.1, makeWay: 0.6, lane: 1.5, drive: 2, sleep: 1, wakeK: 0.5, restV: 0.05, turn: 4 };
+  // turn: the most a unit's travel direction rotates per second (rad/s; 0 = at once), so field updates and path bends
+  // turn units over a fraction of a second instead of snapping them round.
+  // Resting bodies: a unit with nowhere to go (or settled inside its group's target) that has barely moved for REST_TICKS
+  // falls asleep and skips steering, contact search and the solve. It wakes when ordered, when a moving ally on a
+  // collision course asks, or when a contact pushes it harder than wakeK x its own drive could hold.
   // drive: a unit's pull towards where its throttle wants it is capped at drive x its mass x the acceleration limit,
   // so units push with bounded force, slide along what they touch, and can be pushed by anything stronger.
   // lane: how strongly allied traffic coming the other way (read from the team's flow map 4, 8 and 12 tiles ahead)
@@ -1018,9 +1028,10 @@ var SimCore = (function () {
   const PH_MOVE = 1, PH_CONG = 2, PH_GHASH = 3, PH_GSCATTER = 4, PH_PERM = 5, PH_GBUILD = 6, PH_PRIMAL = 7, PH_DUAL = 8, PH_END = 9, PH_COORD = 10, PH_CONTACTS = 11, PH_CCOPY = 12, PH_LCOUNT = 13, PH_LFILL = 14, PH_LSORT = 15, PH_STEER = 16, PH_TCAP = 17, PH_TGATHER = 18, PH_TVEL = 19, PH_TFORCE = 20, PH_CONG2 = 21, PH_G1 = 22, PH_G2 = 23, PH_G3 = 24;
   // Threaded physics: every array the per-body solve and the contact update read or write (positions are already shared)
   const PHYS_KEYS = ['aBud', 'aFE', 'aHd', 'aIn', 'aM', 'aSh', 'aTh', 'aTh0', 'aX0', 'aY0', 'aYT', 'aYX', 'aYY'];
-  const COORD_KEYS = ['aTeam', 'aTVX', 'aTVY', 'aDVX', 'aDVY', 'aAv', 'aMwX', 'aMwY'];
+  const COORD_KEYS = ['aTeam', 'aTVX', 'aTVY', 'aDVX', 'aDVY', 'aAv', 'aMwX', 'aMwY', 'aWake'];
+  const ASLEEP = 255, REST_TICKS = 60; // aSleep: 0..REST_TICKS-1 counts ticks at rest while awake; ASLEEP means asleep
   const SOLVE_ITEM = 64, DUAL_CHUNK = 2048, COORD_CHUNK = 256, CONTACT_CHUNK = 256, LIST_CHUNK = 4096, STEER_CHUNK = 512;
-  const STEER_KEYS = ['aThr', 'aG', 'aC'];
+  const STEER_KEYS = ['aThr', 'aG', 'aC', 'aDirX', 'aDirY', 'aArr'];
   const CONG_KEYS = ['rho', 'jam', 'F4', 'lastT', 'secActive']; // congestion's per-tile arrays
   const GRID_CHUNK = 2048, GRID_BUCKETS = 8192; // agents per item for bucketing and scattering, buckets per item for sorting
   const TAIL_CHUNK = 512, TAIL_KEYS = ['aSvX', 'aSvY', 'aPr', 'aFx', 'aFy', 'aRm', 'vStat', 'aStuck']; // the step's tail: start, velocities, forces // with the physics, coordination and contact keys: everything steering touches
@@ -1191,7 +1202,7 @@ var SimCore = (function () {
       this.ax = cp(this.ax, Float64Array); this.ay = cp(this.ay, Float64Array); this.aG = cp(this.aG, Uint16Array);
       this.aS = cp(this.aS, Uint8Array); this.aR = cp(this.aR, Float32Array); this.aC = cp(this.aC, Uint8Array); this.aLv = cp(this.aLv, Uint8Array);
       this.aVX = cp(this.aVX, Float32Array); this.aVY = cp(this.aVY, Float32Array);
-      this.aThr = cp(this.aThr, Float32Array); this.aTeam = cp(this.aTeam, Uint8Array); this.aAv = cp(this.aAv, Float32Array); this.aMwX = cp(this.aMwX, Float32Array); this.aMwY = cp(this.aMwY, Float32Array);
+      this.aThr = cp(this.aThr, Float32Array); this.aTeam = cp(this.aTeam, Uint8Array); this.aWake = cp(this.aWake, Uint8Array); this.aArr = cp(this.aArr, Uint8Array); this.aDirX = cp(this.aDirX, Float32Array); this.aDirY = cp(this.aDirY, Float32Array); this.aAv = cp(this.aAv, Float32Array); this.aMwX = cp(this.aMwX, Float32Array); this.aMwY = cp(this.aMwY, Float32Array);
       this.aPr = cp(this.aPr, Float32Array); this.aFx = cp(this.aFx, Float32Array); this.aFy = cp(this.aFy, Float32Array); this.aSh = cp(this.aSh, Uint8Array); this.aTh = cp(this.aTh, Float64Array); this.aW = cp(this.aW, Float32Array); this.aM = cp(this.aM, Float32Array); this.aIn = cp(this.aIn, Float32Array);
       this.aX0 = new Float64Array(cap); this.aY0 = new Float64Array(cap); this.aTh0 = new Float64Array(cap); this.aYX = new Float64Array(cap); this.aYY = new Float64Array(cap); this.aYT = new Float64Array(cap);
       this.aCs = new Float64Array(cap); this.aSn = new Float64Array(cap); this.aFE = new Float64Array(cap); this.aHd = new Uint8Array(cap); this.aBud = new Float64Array(cap); this.aDVX = new Float32Array(cap); this.aDVY = new Float32Array(cap); this.aTVX = new Float32Array(cap); this.aTVY = new Float32Array(cap);
@@ -1211,7 +1222,7 @@ var SimCore = (function () {
       const a = this.M++, r = SIZES[s];
       const sh = shape === 0 || shape === 1 ? shape : this.shapeFor(this.uidNext);
       this.aSh[a] = sh; this.aTh[a] = 0; this.aW[a] = 0; this.aPr[a] = 0; this.aFx[a] = 0; this.aFy[a] = 0;
-      this.aThr[a] = 0; this.aTeam[a] = this.spawnTeam; this.aAv[a] = 0; this.aMwX[a] = 0; this.aMwY[a] = 0; this.aTVX[a] = 0; this.aTVY[a] = 0; this.aDVX[a] = 0; this.aDVY[a] = 0;
+      this.aThr[a] = 0; this.aWake[a] = 0; this.aArr[a] = 0; this.aDirX[a] = 0; this.aDirY[a] = 0; this.aTeam[a] = this.spawnTeam; this.aAv[a] = 0; this.aMwX[a] = 0; this.aMwY[a] = 0; this.aTVX[a] = 0; this.aTVY[a] = 0; this.aDVX[a] = 0; this.aDVY[a] = 0;
       if (sh) { const m = 2 * r * r; this.aM[a] = m; this.aIn[a] = m * r * r / 3; } else { this.aM[a] = Math.PI * r * r; this.aIn[a] = 0; } // density 1
       this.ax[a] = x; this.ay[a] = y; this.aG[a] = g; this.aS[a] = s; this.aR[a] = r; this.aC[a] = CLASS_OF[s]; this.aLv[a] = levelOf(r);
       this.aVX[a] = 0; this.aVY[a] = 0; this.aSide[a] = (a & 1) ? 1 : -1; this.aStuck[a] = 0; this.aSleep[a] = 0; this.aTry[a] = 0; this.aT0[a] = this.time;
@@ -1232,7 +1243,7 @@ var SimCore = (function () {
         this.aVX[a] = this.aVX[last]; this.aVY[a] = this.aVY[last]; this.aSide[a] = this.aSide[last];
         this.aSh[a] = this.aSh[last]; this.aTh[a] = this.aTh[last]; this.aPr[a] = this.aPr[last]; this.aFx[a] = this.aFx[last]; this.aFy[a] = this.aFy[last];
         this.aTVX[a] = this.aTVX[last]; this.aTVY[a] = this.aTVY[last]; this.aDVX[a] = this.aDVX[last]; this.aDVY[a] = this.aDVY[last];
-        this.aThr[a] = this.aThr[last]; this.aTeam[a] = this.aTeam[last]; this.aAv[a] = this.aAv[last]; this.aMwX[a] = this.aMwX[last]; this.aMwY[a] = this.aMwY[last]; this.aW[a] = this.aW[last]; this.aM[a] = this.aM[last]; this.aIn[a] = this.aIn[last];
+        this.aThr[a] = this.aThr[last]; this.aWake[a] = this.aWake[last]; this.aArr[a] = this.aArr[last]; this.aDirX[a] = this.aDirX[last]; this.aDirY[a] = this.aDirY[last]; this.aTeam[a] = this.aTeam[last]; this.aAv[a] = this.aAv[last]; this.aMwX[a] = this.aMwX[last]; this.aMwY[a] = this.aMwY[last]; this.aW[a] = this.aW[last]; this.aM[a] = this.aM[last]; this.aIn[a] = this.aIn[last];
         this.aStuck[a] = this.aStuck[last]; this.aSleep[a] = this.aSleep[last]; this.aTry[a] = this.aTry[last]; this.aT0[a] = this.aT0[last];
         this.bvLayer[a] = this.bvLayer[last]; this.bvCell[a] = this.bvCell[last];
         const lf = this.bvLeaf[last]; this.bvLeaf[a] = lf; if (lf) lf.ent = a;
@@ -1283,10 +1294,14 @@ var SimCore = (function () {
       const lv = this.aLv; for (let j = 0; j < M; j++) u8[j] = lv[o[j]]; lv.set(u8.subarray(0, M));
       const bl = this.bvLayer; for (let j = 0; j < M; j++) u8[j] = bl[o[j]]; bl.set(u8.subarray(0, M));
       const sh = this.aSh; for (let j = 0; j < M; j++) u8[j] = sh[o[j]]; sh.set(u8.subarray(0, M));
-      const tm = this.aTeam; for (let j = 0; j < M; j++) u8[j] = tm[o[j]]; tm.set(u8.subarray(0, M)); // sidestep and make-way are recomputed this tick
+      const tm = this.aTeam; for (let j = 0; j < M; j++) u8[j] = tm[o[j]]; tm.set(u8.subarray(0, M));
+      const ar = this.aArr; for (let j = 0; j < M; j++) u8[j] = ar[o[j]]; ar.set(u8.subarray(0, M)); // sidestep and make-way are recomputed this tick
       const tt = this.aTh; for (let j = 0; j < M; j++) f64[j] = tt[o[j]]; tt.set(f64.subarray(0, M));
       // coordination reads intended and desired velocities right after a re-sort, so they move with their agents
-      for (const arr of [this.aW, this.aM, this.aIn, this.aPr, this.aFx, this.aFy, this.aTVX, this.aTVY, this.aDVX, this.aDVY, this.aThr]) { for (let j = 0; j < M; j++) f32[j] = arr[o[j]]; arr.set(f32.subarray(0, M)); }
+      // a sleeper skips steering, so its starting pose, targets, orientation and margins must move with it too (an array
+      // not yet grown after new agents arrived is skipped: the physics step reallocates it with zeros, and sleepers have none)
+      for (const arr of [this.aX0, this.aY0, this.aTh0, this.aYX, this.aYY, this.aYT, this.aCs, this.aSn, this.aBud, this.aRm]) if (arr && arr.length >= M) { for (let j = 0; j < M; j++) f64[j] = arr[o[j]]; arr.set(f64.subarray(0, M)); }
+      for (const arr of [this.aW, this.aM, this.aIn, this.aPr, this.aFx, this.aFy, this.aTVX, this.aTVY, this.aDVX, this.aDVY, this.aThr, this.aDirX, this.aDirY]) { for (let j = 0; j < M; j++) f32[j] = arr[o[j]]; arr.set(f32.subarray(0, M)); }
       if (this.structure === 1) { // grid mode has no leaves to move
         const lf = this.bvLeaf, tmp = new Array(M); for (let j = 0; j < M; j++) tmp[j] = lf[o[j]];
         for (let j = 0; j < M; j++) { lf[j] = tmp[j]; if (tmp[j]) tmp[j].ent = j; }
@@ -1382,7 +1397,7 @@ var SimCore = (function () {
         if (old === gid) continue;
         const r2 = this.aR[a] * this.aR[a];
         if (old && this.groups[old]) { this.groups[old].count--; this.groups[old].area -= r2; }
-        this.aG[a] = gid; g.count++; g.area += r2; this.aSleep[a] = 0; this.aStuck[a] = 0; this.aT0[a] = this.time;
+        this.aG[a] = gid; g.count++; g.area += r2; this.aSleep[a] = 0; this.aArr[a] = 0; this.aStuck[a] = 0; this.aT0[a] = this.time;
       }
       for (let i = 1; i <= MAX_GROUPS; i++) { const o = this.groups[i]; if (o && o.count <= 0 && i !== gid) { this.dropSlots(o); this.groups[i] = null; if (this.threads) this.hlog.push(['x', i]); } }
       g.r = this.targetRadius(g.area);
@@ -1951,7 +1966,7 @@ var SimCore = (function () {
           if (this.freeOfAgents(x, y, r, a, done, nd)) break;
         }
         if (lx >= 0) { this.ax[a] = lx; this.ay[a] = ly; }
-        this.aT0[a] = this.time; this.aSleep[a] = 0; this.aStuck[a] = 0; this.aVX[a] = 0; this.aVY[a] = 0; this.aW[a] = 0; this.aPr[a] = 0; this.aFx[a] = 0; this.aFy[a] = 0;
+        this.aT0[a] = this.time; this.aSleep[a] = 0; this.aArr[a] = 0; this.aDirX[a] = 0; this.aDirY[a] = 0; this.aStuck[a] = 0; this.aVX[a] = 0; this.aVY[a] = 0; this.aW[a] = 0; this.aPr[a] = 0; this.aFx[a] = 0; this.aFy[a] = 0;
         this.aTVX[a] = 0; this.aTVY[a] = 0; this.aDVX[a] = 0; this.aDVY[a] = 0; this.aThr[a] = 0;
         this.stampAround(this.ax[a], this.ay[a], r);
         if (this.structure === 1) { this.bvTreeOf(a).remove(this.bvLeaf[a]); this.bvInsert(a); }
@@ -2342,7 +2357,8 @@ var SimCore = (function () {
           let rx = svx[A] * dt, ry = svy[A] * dt;
           if (B >= 0) { rx -= svx[B] * dt; ry -= svy[B] * dt; }
           const cp = C.kC0N[k] + nx * rx + ny * ry; if (cp >= 0) continue;
-          const wA = 1 / this.aM[A], wB = B >= 0 ? 1 / this.aM[B] : 0, s = -cp / (wA + wB);
+          const wA = this.aSleep[A] === ASLEEP ? 0 : 1 / this.aM[A], wB = B >= 0 && this.aSleep[B] !== ASLEEP ? 1 / this.aM[B] : 0; if (wA + wB === 0) continue;
+          const s = -cp / (wA + wB);
           cx[A] += nx * s * wA; cy[A] += ny * s * wA;
           if (B >= 0) { cx[B] -= nx * s * wB; cy[B] -= ny * s * wB; }
         }
@@ -2363,10 +2379,10 @@ var SimCore = (function () {
 
       if (!tail) {
         const na = Math.ceil(M / TAIL_CHUNK);
-        if (!this.vStat || this.vStat.length < 6 * na) this.vStat = new Float64Array(6 * (na + 64));
+        if (!this.vStat || this.vStat.length < 7 * na) this.vStat = new Float64Array(7 * (na + 64));
         for (let i = 0; i < na; i++) this.velChunk(i, dt);
         this.tailStats(na);
-        for (let a = 0; a < M; a++) this.forceGather(a);
+        for (let a = 0; a < M; a++) { this.forceGather(a); this.restUpdate(a); }
       }
       const t = this.conPrev; this.conPrev = this.conCur; this.conCur = t; this.conPrev.buildHash();
     }
@@ -2403,18 +2419,40 @@ var SimCore = (function () {
       return (fx * dx + fy * dy) / d < -thr;
     }
     steer(a, dt) { // the inertial target: where the agent would be if nothing were in the way
+      { const r = this.aArr[a]; if (r & 2 ? !(r & 1) : r & 1) this.aArr[a] = (r >> 1) & 1; } // last tick's arrival decision takes effect
+      if (this.aSleep[a] === ASLEEP) { // resting: nothing to steer, unless a moving ally on its way asked it to wake
+        if (!this.aWake[a]) return;
+        this.aSleep[a] = 0;
+      }
+      this.aWake[a] = 0;
       const x = this.ax[a], y = this.ay[a], ph = this.ph;
       this.aX0[a] = x; this.aY0[a] = y; this.aTh0[a] = this.aTh[a];
       if (this.aSh[a]) { this.aCs[a] = dcos(this.aTh[a]); this.aSn[a] = dsin(this.aTh[a]); } else { this.aCs[a] = 1; this.aSn[a] = 0; }
       let dvx = 0, dvy = 0;
-      const gid = this.aG[a], g = gid ? this.groups[gid] : null;
+      const gid = this.aG[a], g = gid && !(this.aArr[a] & 1) ? this.groups[gid] : null; // arrived: nowhere left to go
       if (g) {
         const tdx = g.cx - x, tdy = g.cy - y, td2 = tdx * tdx + tdy * tdy;
         if (td2 <= g.r * g.r) {
           if (g.respawn) this.arrived.push(a);
           else if (td2 > 1e-8) { const l = Math.sqrt(td2), sp = Math.min(this.speed, ph.arrive * l); dvx = tdx / l * sp; dvy = tdy / l * sp; } // pack towards the centre
-        } else if (this.sample(g, this.aC[a], x, y) || (this.aC[a] > 0 && this.sample(g, 0, x, y))) { dvx = this.sx * this.speed; dvy = this.sy * this.speed; }
-        else { const l = Math.sqrt(td2); dvx = tdx / l * this.speed; dvy = tdy / l * this.speed; }
+        } else {
+          if (this.sample(g, this.aC[a], x, y) || (this.aC[a] > 0 && this.sample(g, 0, x, y))) { dvx = this.sx * this.speed; dvy = this.sy * this.speed; }
+          else { const l = Math.sqrt(td2); dvx = tdx / l * this.speed; dvy = tdy / l * this.speed; }
+          if (ph.turn > 0) { // travel direction turns at a bounded rate (arrival and step-aside moves stay immediate)
+            const rl = Math.sqrt(dvx * dvx + dvy * dvy), rx = dvx / rl, ry = dvy / rl;
+            let px = this.aDirX[a], py = this.aDirY[a];
+            if (px === 0 && py === 0) { px = rx; py = ry; }
+            else {
+              const mt = ph.turn * dt, cm = dcos(mt);
+              if (px * rx + py * ry >= cm) { px = rx; py = ry; }
+              else {
+                const sn = px * ry - py * rx >= 0 ? dsin(mt) : -dsin(mt), nx = px * cm - py * sn, ny = px * sn + py * cm, nl = Math.sqrt(nx * nx + ny * ny);
+                px = nx / nl; py = ny / nl;
+              }
+            }
+            this.aDirX[a] = px; this.aDirY[a] = py; dvx = px * rl; dvy = py * rl;
+          }
+        }
       }
       const dl0 = Math.sqrt(dvx * dvx + dvy * dvy);
       if (ph.coord && dl0 <= 0.2 * this.speed) { // idle or settling: step aside when a moving ally asks
@@ -2483,7 +2521,8 @@ var SimCore = (function () {
     }
     // One agent's contacts: every other agent once (the one with the higher index records the pair) and nearby walls.
     contactsAgent(a) {
-      const ax = this.ax, ay = this.ay, aR = this.aR, wall = this.wall, margin = this.cMargin, rmMax = this.cRmMax, dt = this.cDt;
+      if (this.aSleep[a] === ASLEEP) return; // a sleeper searches nothing: awake neighbours record its contacts, and sleepers don't touch
+      const ax = this.ax, ay = this.ay, aR = this.aR, wall = this.wall, margin = this.cMargin, rmMax = this.cRmMax, dt = this.cDt, sl = this.aSleep;
       {
         const x = ax[a], y = ay[a], ra = aR[a], ma = margin + this.aRm[a];
         for (let k = 0; k < 3; k++) { // other agents, each pair once
@@ -2495,7 +2534,7 @@ var SimCore = (function () {
             for (let bx = bx0; bx <= bx1;) {
               const blk = bx >> 3, end = Math.min(bx1, (blk << 3) + 7), base = ((Math.imul(blk, 73856093) ^ hy) << 6) | ly;
               for (let j = st[(base | (bx & 7)) & mask], e = st[((base | (end & 7)) & mask) + 1]; j < e; j++) {
-                const b = ag[j]; if (b <= a) continue;
+                const b = ag[j]; if (b === a || (b < a && sl[b] !== ASLEEP)) continue; // awake pairs once; sleepers always from this side
                 const mb = ma + this.aRm[b], qx = px[j] - x, qy = py[j] - y, q = ra + pr[j] + mb;
                 if (qx * qx + qy * qy < q * q) this.pairContacts(a, b, mb);
               }
@@ -2607,11 +2646,13 @@ var SimCore = (function () {
         else this.aStuck[a] = 0;
         if (this.aAv[a] !== 0) side++;
       }
-      const v = this.vStat, o = 6 * i; v[o] = moving; v[o + 1] = want; v[o + 2] = stuck; v[o + 3] = side; v[o + 4] = flowNum; v[o + 5] = flowDen;
+      let resting = 0; for (let a = a0; a < a1; a++) if (this.aSleep[a] === ASLEEP) resting++;
+      const v = this.vStat, o = 7 * i; v[o] = moving; v[o + 1] = want; v[o + 2] = stuck; v[o + 3] = side; v[o + 4] = flowNum; v[o + 5] = flowDen; v[o + 6] = resting;
     }
     tailStats(na) { // chunk statistics combined in chunk order
-      const v = this.vStat; let moving = 0, want = 0, stuck = 0, side = 0, flowNum = 0, flowDen = 0;
-      for (let i = 0, o = 0; i < na; i++, o += 6) { moving += v[o]; want += v[o + 1]; stuck += v[o + 2]; side += v[o + 3]; flowNum += v[o + 4]; flowDen += v[o + 5]; }
+      const v = this.vStat; let moving = 0, want = 0, stuck = 0, side = 0, flowNum = 0, flowDen = 0, resting = 0;
+      for (let i = 0, o = 0; i < na; i++, o += 7) { moving += v[o]; want += v[o + 1]; stuck += v[o + 2]; side += v[o + 3]; flowNum += v[o + 4]; flowDen += v[o + 5]; resting += v[o + 6]; }
+      this.st.rest = this.M ? resting / this.M : 0;
       const M = this.M; this.moved = moving; this.st.stuck = want ? stuck / want : 0; this.st.side = M ? side / M : 0;
       this.st.flow = flowDen ? flowNum / flowDen : 1; // share of desired speed achieved
     }
@@ -2644,7 +2685,8 @@ var SimCore = (function () {
         let rx = svx[A] * dt, ry = svy[A] * dt;
         if (B >= 0) { rx -= svx[B] * dt; ry -= svy[B] * dt; }
         const cp = C.kC0N[k] + nx * rx + ny * ry; if (cp >= 0) continue;
-        const wA = 1 / this.aM[A], wB = B >= 0 ? 1 / this.aM[B] : 0, s = -cp / (wA + wB);
+        const wA = this.aSleep[A] === ASLEEP ? 0 : 1 / this.aM[A], wB = B >= 0 && this.aSleep[B] !== ASLEEP ? 1 / this.aM[B] : 0; if (wA + wB === 0) continue;
+        const s = -cp / (wA + wB);
         if (code & 1) { cx -= nx * s * wB; cy -= ny * s * wB; } else { cx += nx * s * wA; cy += ny * s * wA; }
       }
       this.ax[a] = this.aX0[a] + svx[a] * dt + cx; this.ay[a] = this.aY0[a] + svy[a] * dt + cy;
@@ -2654,12 +2696,61 @@ var SimCore = (function () {
       if (code === PH_TCAP) for (let a = a0; a < a1; a++) this.startCap(a);
       else if (code === PH_TGATHER) for (let a = a0; a < a1; a++) this.startGather(a, dt);
       else if (code === PH_TVEL) this.velChunk(i, dt);
-      else for (let a = a0; a < a1; a++) this.forceGather(a);
+      else for (let a = a0; a < a1; a++) { this.forceGather(a); this.restUpdate(a); }
+    }
+    // Falls asleep after REST_TICKS with nowhere to go (or settled inside its group's target), barely moving, not turning
+    // and with no step-aside request; freezes exactly where it is. Wakes when a contact pushes it harder than its own
+    // drive could hold (only contacts with awake units exist, so sleeping neighbours never wake each other).
+    // Arrival spreads by contact: a unit of a group (not a respawning one) has arrived once it reaches its target's
+    // centre, or touches an arrived unit of its own group while near or inside the target; a unit pushed well out of the
+    // target walks back. The decision reads only arrival states from before this pass and takes effect next tick, so the
+    // outcome doesn't depend on processing order or thread count.
+    arriveUpdate(a) {
+      const r = this.aArr[a], gid = this.aG[a], g = gid ? this.groups[gid] : null;
+      let next = 0;
+      if (g && !g.respawn) {
+        const ex = this.ax[a] - g.cx, ey = this.ay[a] - g.cy, d2 = ex * ex + ey * ey, ra = this.aR[a], near = g.r + ra + 0.5;
+        if (r & 1) next = d2 <= (near + 2) * (near + 2) ? 1 : 0; // stays arrived unless pushed well out of the target
+        else if (d2 <= near * near) {
+          const c0 = Math.max(0.5, ra);
+          if (d2 <= c0 * c0) next = 1;
+          else {
+            const C = this.conCur;
+            for (let j = C.bStart[a], e = C.bStart[a + 1]; j < e; j++) {
+              const code = C.bList[j], k = code >> 1, mi = C.kM[k], o = code & 1 ? C.mA[mi] : C.mB[mi];
+              if (o >= 0 && this.aG[o] === gid && (this.aArr[o] & 1) && C.kC0N[k] < 0.05) { next = 1; break; } // touching an arrived group-mate
+            }
+          }
+        }
+      }
+      this.aArr[a] = (r & 1) | (next << 1);
+    }
+    restUpdate(a) {
+      this.arriveUpdate(a);
+      const ph = this.ph, s = this.aSleep[a];
+      if (!ph.sleep) { if (s) this.aSleep[a] = 0; return; }
+      if (s === ASLEEP) { if (this.aPr[a] > ph.wakeK * ph.drive * this.aM[a] * ph.accel * this.speed) this.aSleep[a] = 0; return; }
+      const sp = this.speed, vx = this.aVX[a], vy = this.aVY[a], vr = ph.restV * sp;
+      let rest = vx * vx + vy * vy < vr * vr && Math.abs(this.aW[a]) < 0.1 && this.aMwX[a] === 0 && this.aMwY[a] === 0;
+      if (rest) {
+        const dx = this.aDVX[a], dy = this.aDVY[a];
+        if (dx * dx + dy * dy >= 0.04 * sp * sp) { // wants to move: rests only once settled inside its group's target
+          const g = this.aG[a] ? this.groups[this.aG[a]] : null;
+          rest = !!g && !g.respawn && (this.ax[a] - g.cx) * (this.ax[a] - g.cx) + (this.ay[a] - g.cy) * (this.ay[a] - g.cy) <= g.r * g.r;
+        }
+      }
+      if (!rest) { if (s) this.aSleep[a] = 0; return; }
+      if (s + 1 < REST_TICKS) { this.aSleep[a] = s + 1; return; }
+      this.aSleep[a] = ASLEEP;
+      const x = this.ax[a], y = this.ay[a], t = this.aTh[a];
+      this.aX0[a] = x; this.aY0[a] = y; this.aTh0[a] = t; this.aYX[a] = x; this.aYY[a] = y; this.aYT[a] = t;
+      this.aVX[a] = 0; this.aVY[a] = 0; this.aW[a] = 0; this.aTVX[a] = 0; this.aTVY[a] = 0; this.aThr[a] = 0; this.aDVX[a] = 0; this.aDVY[a] = 0;
+      this.aBud[a] = 0; this.aRm[a] = 0;
     }
     // The step's tail on all threads, in one session: starting point, solve order, solve, velocities, forces.
     tailThreaded(dt) {
       const M = this.M, na = Math.ceil(M / TAIL_CHUNK);
-      if (!this.vStat || this.vStat.length < 6 * na) this.vStat = new Float64Array(6 * (na + 64));
+      if (!this.vStat || this.vStat.length < 7 * na) this.vStat = new Float64Array(7 * (na + 64));
       if (!this.beginSession({ dt, speed: this.speed, ph: this.ph, cur: this.cons.indexOf(this.conCur), nk: this.conCur.nk })) return false;
       this.phase(PH_TCAP, 0, 0, na);
       this.phase(PH_TGATHER, 0, 0, na);
@@ -2680,6 +2771,7 @@ var SimCore = (function () {
       }
     }
     budgetAgent(a, dt) { // each square's turn budget for this step; its corners can swing at most budget * radius
+      if (this.aSleep[a] === ASLEEP) return; // kept at zero while asleep
       const ph = this.ph, bud = !this.aSh[a] || ph.rot === 0 ? 0 : Math.min(0.2, (Math.abs(this.aW[a]) + (ph.rot === 2 ? ph.faceW * Math.abs(this.aFE[a]) : 0)) * dt * ph.rotK + 0.005);
       this.aBud[a] = bud; const v = bud * this.aR[a]; this.aRm[a] = v;
     }
@@ -2913,6 +3005,7 @@ var SimCore = (function () {
       this.ct = C.kC0T[k] * (1 - al) + ny * dx - nx * dy + C.kAT[k] * dtA + C.kBT[k] * dtB;
     }
     primal(a, dt) { // one body's block update: inertia plus every contact on it, solved exactly
+      if (this.aSleep[a] === ASLEEP) return; // resting bodies hold still: contacts treat them as fixed
       const ph = this.ph, C = this.conCur, fr = ph.fric, sq = this.aSh[a] === 1 && ph.rot !== 0, id2 = 1 / (dt * dt), m = this.aM[a] * id2;
       const inr = this.aIn[a];
       let h00 = m, h01 = 0, h11 = m, h02 = 0, h12 = 0, h22 = sq ? inr * id2 : 1;
@@ -3004,6 +3097,7 @@ var SimCore = (function () {
       const tvx = this.aTVX, tvy = this.aTVY, dvx = this.aDVX, dvy = this.aDVY, aR = this.aR, team = this.aTeam, fx = this.flowX, fy = this.flowY;
       const ux = dvx[a], uy = dvy[a], u2 = ux * ux + uy * uy, x = this.ax[a], y = this.ay[a], ra = aR[a], ta = team[a];
       if (u2 < idle2) { // idle: gather requests from moving allies whose next second runs into it
+        if (this.aSleep[a] === ASLEEP) { this.aMwX[a] = 0; this.aMwY[a] = 0; return; } // asleep: movers on their way wake it instead
         let mx = 0, my = 0;
         for (let k = 0; k < 3; k++) {
           const l = this.lv[k]; if (!l.n) continue;
@@ -3061,6 +3155,7 @@ var SimCore = (function () {
               const tc = (qx * wx + qy * wy) / w2; if (tc <= 0 || tc > T) continue;
               const mx = qx - wx * tc, my = qy - wy * tc; if (mx * mx + my * my >= rr * rr) continue; // passes clear
               const lat = qx * sx + qy * sy, urgency = 1 - tc / T;
+              if (idle && this.aSleep[b] === ASLEEP) this.aWake[b] = 1; // a sleeping ally in the way: wake it (any thread may set it; only ever to 1)
               side += (Math.abs(lat) < 0.25 * rr ? 1 : lat > 0 ? -1 : 1) * urgency; // head-on: everyone takes the same side
             }
             bx = end + 1;
@@ -3133,7 +3228,7 @@ var SimCore = (function () {
         switch (c.kind) {
           case 'order': { const slots = []; for (const u of c.uids) { const a = u > 0 && u < this.uidSlot.length ? this.uidSlot[u] : -1; if (a >= 0) slots.push(a); } this.orderGroup(slots, c.cx, c.cy); break; }
           case 'spawn': { const keep = this.shapeMode; if (c.shape) this.shapeMode = c.shape; this.spawnTeam = c.team | 0; this.spawnIdle(c.cx, c.cy, c.size); this.shapeMode = keep; this.spawnTeam = 0; break; }
-          case 'phys': for (const k of ['iters', 'fric', 'rest', 'rot', 'faceW', 'coord', 'lane', 'drive']) if (c[k] !== undefined) this.ph[k] = c[k]; break;
+          case 'phys': for (const k of ['iters', 'fric', 'rest', 'rot', 'faceW', 'coord', 'lane', 'drive', 'sleep', 'turn', 'faceW']) if (c[k] !== undefined) this.ph[k] = c[k]; if (c.sleep === 0) this.aSleep.fill(0, 0, this.M); break;
           case 'edits': this.applyEdits(c.tiles, c.values); this.pendingEdits.push({ tiles: c.tiles, values: c.values }); break;
           case 'speed': this.speed = c.v; break;
         }
@@ -3191,7 +3286,7 @@ var SimCore = (function () {
         F[0] = this.ax[a]; F[1] = this.ay[a]; mix(U[0]); mix(U[1]); mix(U[2]); mix(U[3]);
         G[0] = this.aVX[a]; G[1] = this.aVY[a]; G[2] = this.aStuck[a]; mix(V[0]); mix(V[1]); mix(V[2]);
         mix(this.aUid[a]); mix(this.aG[a] | (this.aS[a] << 16) | (this.aSleep[a] << 24) | ((this.aSide[a] + 1) << 26));
-        F[0] = this.aTh[a]; mix(U[0]); mix(U[1]); G[0] = this.aW[a]; mix(V[0]); mix(this.aSh[a] | (this.aTeam[a] << 1));
+        F[0] = this.aTh[a]; mix(U[0]); mix(U[1]); G[0] = this.aW[a]; mix(V[0]); mix(this.aSh[a] | (this.aTeam[a] << 1) | ((this.aArr[a] & 1) << 2));
       }
       for (let i = 1; i <= MAX_GROUPS; i++) { const g = this.groups[i]; if (!g) continue; F[0] = g.cx; F[1] = g.r; mix(i); mix(U[0]); mix(U[1]); mix(U[2]); mix(U[3]); mix(g.count); }
       mix(this.rng.state()); mix(this.tick);
@@ -3204,12 +3299,12 @@ var SimCore = (function () {
       let buf = null;
       while (this.posBufs.length) { const b = this.posBufs.pop(); if (b.length >= 4 * M) { buf = b; break; } }
       if (!buf) buf = new Float32Array(Math.max(4 * M, 4096));
-      for (let a = 0; a < M; a++) { const id = this.idOf[a], o = 4 * id; buf[o] = this.ax[a]; buf[o + 1] = this.ay[a]; buf[o + 2] = this.aTh[a]; buf[o + 3] = 0; }
+      for (let a = 0; a < M; a++) { const id = this.idOf[a], o = 4 * id; buf[o] = this.ax[a]; buf[o + 1] = this.ay[a]; buf[o + 2] = this.aTh[a]; buf[o + 3] = this.aSleep[a] === ASLEEP ? 1 : 0; }
       let settled = 0;
       for (let a = 0; a < M; a++) { const g = this.groups[this.aG[a]]; if (!g || g.respawn) continue; const ex = this.ax[a] - g.cx, ey = this.ay[a] - g.cy; if (ex * ex + ey * ey <= g.r * g.r) settled++; }
       const msg = { type: 'frame', pos: buf, M, steps, time: this.time, simMs: this.st.simMs, upkeepMs: this.st.upkeepMs, moveMs: this.st.moveMs,
         stepMs: this.st.stepMs, congMs: this.st.congMs, passMs: this.st.passMs, otherMs: this.st.otherMs, threads: Math.max(1, this.threads),
-        stuck: this.st.stuck || 0, side: this.st.side || 0, flow: this.st.flow === undefined ? 1 : this.st.flow, contacts: this.st.contacts || 0, deep: this.st.deep || 0, over: this.st.over || 0, contMs: this.st.contMs || 0, solveMs: this.st.solveMs || 0, iters: this.ph.iters,
+        stuck: this.st.stuck || 0, side: this.st.side || 0, rest: this.st.rest || 0, flow: this.st.flow === undefined ? 1 : this.st.flow, contacts: this.st.contacts || 0, deep: this.st.deep || 0, over: this.st.over || 0, contMs: this.st.contMs || 0, solveMs: this.st.solveMs || 0, iters: this.ph.iters,
         nchecks: this.st.checks, visits: this.st.visits, structure: this.structure, moving: M ? this.moved / M : 0, settled, groups: this.groupList().length,
         tick: this.steps, checks, blocked: this.blocked, pendingBatches: this.batches.length, waits: this.st.waits };
       const tr = [buf.buffer];
@@ -3571,7 +3666,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
       let size = max(2.0 * rad * cam.zoom, 1.6 * cam.dpr) + sel * 3.0 * cam.dpr + 1.0;
       var o: VOut;
       o.p = toClip((w - cam.centre) * cam.zoom + 0.5 * cam.viewport + corner * 0.5 * size);
-      o.uv = corner; o.col = palette[g].rgb; o.sel = sel; o.size = size; o.ang = w4.z; o.shp = f32((inf >> 20u) & 1u);
+      // resting units (w = 1) are drawn dimmer
+      o.uv = corner; o.col = palette[g].rgb * (1.0 - 0.45 * w4.w); o.sel = sel; o.size = size; o.ang = w4.z; o.shp = f32((inf >> 20u) & 1u);
       return o;
     }
     @fragment fn fs(v: VOut) -> @location(0) vec4f {
@@ -3872,7 +3968,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
     if (S.M) device.queue.writeBuffer(posBuf, 0, S.pos.buffer, S.pos.byteOffset, S.M * 16);
     if (S.infoDirty) rebuildInfo();
     S.st.upkeep = m.upkeepMs; S.st.moves = m.moveMs; S.st.checks = m.nchecks; S.st.visits = m.visits;
-    S.st.step = m.stepMs; S.st.cong = m.congMs; S.st.contacts = m.contacts; S.st.deep = m.deep; S.st.over = m.over; S.st.contMs = m.contMs; S.st.solveMs = m.solveMs; S.st.iters = m.iters;
+    S.st.step = m.stepMs; S.st.cong = m.congMs; S.st.contacts = m.contacts; S.st.deep = m.deep; S.st.over = m.over; S.st.stuck = m.stuck; S.st.side = m.side; S.st.flow = m.flow; S.st.rest = m.rest; S.st.contMs = m.contMs; S.st.solveMs = m.solveMs; S.st.iters = m.iters;
     { // speed against real time, from how fast the tick advances (1.00 means keeping up)
       const tn = performance.now();
       if (S.spdT !== undefined) { const dt = (tn - S.spdT) / 1000, dk = m.tick - S.spdK; if (dt > 0 && dk >= 0) { const v = dk / dt / 120; S.st.speed = S.st.speed === undefined ? v : S.st.speed + (v - S.st.speed) * 0.05; } }
@@ -4018,7 +4114,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
     S.ready = false; S.scene = name; S.awaiting = false;
     const count = FIXED_SCENES[name] || S.count, seed = ((Math.random() * 2147483647) | 0) || 1;
     // the match record: everything both peers need to start identically, including shapes and physics settings
-    LK.match = { name, count, seed, speed: S.speed, shapes: S.shapes, teams: $('teams').value, phys: { iters: +$('phIters').value, fric: +$('phFric').value, rest: +$('phRest').value, rot: +$('phRot').value, faceW: +$('phFace').value, coord: +$('phCoord').value, drive: +$('phDrive').value } };
+    LK.match = { name, count, seed, speed: S.speed, shapes: S.shapes, teams: $('teams').value, phys: { iters: +$('phIters').value, fric: +$('phFric').value, rest: +$('phRest').value, rot: +$('phRot').value, faceW: +$('phFace').value, coord: +$('phCoord').value, drive: +$('phDrive').value, sleep: +$('phSleep').value, turn: +$('phTurn').value } };
     Object.assign(LK, { horizon: 0, acc: 0, seq: 0, log: [], outA: [], outB: [], sentA: 0, sentB: 0, tickA: 0, tickB: 0, waitsA: 0, syncThrough: -1, desyncAt: -1, compared: 0 });
     LK.checksA.clear(); LK.checksB.clear();
     sendSim(Object.assign({ type: 'reset' }, LK.match));
@@ -4037,8 +4133,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
   const group = (attr, cb) => document.querySelectorAll(`[${attr}]`).forEach((b) => b.addEventListener('click', () => { document.querySelectorAll(`[${attr}]`).forEach((c) => c.setAttribute('aria-pressed', String(c === b))); cb(b.getAttribute(attr)); }));
   const setStructure = (v) => { S.structure = v; document.querySelectorAll('[data-structure]').forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.structure === v))); sendSim({ type: 'structure', v }); if (LK.b.on) queueB({ type: 'structure', v: bStructure() }, true); };
   group('data-shapes', (v) => { S.shapes = v; });
-  const physNow = () => ({ iters: +$('phIters').value, fric: +$('phFric').value, rest: +$('phRest').value, rot: +$('phRot').value, faceW: +$('phFace').value, coord: +$('phCoord').value, drive: +$('phDrive').value });
-  ['phIters', 'phFric', 'phRest', 'phRot', 'phFace', 'phCoord', 'phDrive'].forEach((id) => $(id).addEventListener('change', () => issue('phys', physNow())));
+  const physNow = () => ({ iters: +$('phIters').value, fric: +$('phFric').value, rest: +$('phRest').value, rot: +$('phRot').value, faceW: +$('phFace').value, coord: +$('phCoord').value, drive: +$('phDrive').value, sleep: +$('phSleep').value, turn: +$('phTurn').value });
+  ['phIters', 'phFric', 'phRest', 'phRot', 'phFace', 'phCoord', 'phDrive', 'phSleep', 'phTurn'].forEach((id) => $(id).addEventListener('change', () => issue('phys', physNow())));
   group('data-size', (v) => { S.spawnSize = +v; setTool('spawn'); });
   group('data-fclass', (v) => { S.fieldClass = +v; setFocus(S.focus); });
   const setPaused = (p) => { S.paused = p; $('pause').textContent = p ? 'Play' : 'Pause'; }; // pausing stops granting ticks
@@ -4111,6 +4207,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = SimCore;
     $('sChecks').textContent = (S.st.contacts || 0).toFixed(2);
     $('sDeep').textContent = `${(100 * (S.st.deep || 0)).toFixed(1)}% of radius, ${fmt(S.st.over || 0)} pairs over 2%`;
     $('sStuck').textContent = `${(100 * (S.st.stuck || 0)).toFixed(1)}% of agents that want to move`;
+    $('sRest').textContent = `${(100 * (S.st.rest || 0)).toFixed(1)}% of agents asleep`;
     $('sFlow').textContent = `${(100 * (S.st.flow === undefined ? 1 : S.st.flow)).toFixed(0)}% of desired speed, ${(100 * (S.st.side || 0)).toFixed(0)}% sidestepping`;
     $('sField').textContent = S.st.field || '–';
     $('sAgents').textContent = fmt(S.M);
